@@ -1,0 +1,14 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data:; style-src 'self'; script-src 'self'; connect-src 'none'"><title>WeChat Dot</title><link rel="stylesheet" href="style.css"></head>
+<body><main>
+  <header><div class="brand"><span class="logo">w<span>·</span>d</span> WeChat Dot</div><span class="version" id="version"></span></header>
+  <section class="intro"><div class="eyebrow">微信里的老朋友</div><h1>把你的 dot，接到微信。</h1><p>同一个 dot，同一段对话。电脑开着，就能在微信里接着聊。</p></section>
+  <section class="connections">
+    <article class="card"><div class="card-top"><span class="number">01</span><span class="badge" id="weixin-badge">未连接</span></div><h2>连接微信</h2><p class="hint" id="weixin-detail">用手机微信扫码</p><div id="qr-area" hidden><img id="qr" alt="微信登录二维码"></div><div id="verify-area" hidden><input id="verify-code" placeholder="手机上的配对码"><button data-action="verify">确认</button></div><button class="secondary" id="weixin-button" data-action="weixin">微信扫码</button></article>
+    <article class="card"><div class="card-top"><span class="number">02</span><span class="badge" id="dot-badge">未连接</span></div><h2 id="dot-name">连接你的 dot</h2><p class="hint" id="dot-detail">登录你自己的 ChatGPT</p><div class="dot-art" aria-hidden="true"><div></div></div><button class="secondary" id="dot-button" data-action="dot">登录 ChatGPT</button><button class="text-button" data-action="discover">重新识别 dot</button></article>
+  </section>
+  <div id="finish-login" hidden><button class="primary" data-action="finish-login">登录完成，识别 dot</button></div>
+  <section class="control"><div><div class="status-line"><span class="status-dot" id="status-dot"></span><strong id="running">准备连接</strong></div><p id="detail">连接两个账号，就可以开始了。</p></div><button class="primary" id="toggle" data-action="start" disabled>开始连接 <span>↗</span></button></section>
+  <div id="review" hidden><span>核对 ChatGPT 中的上一条消息：</span><button data-action="show-dot">打开 ChatGPT</button><button data-action="received">已收到，继续</button><button data-action="retry">未收到，重试</button></div>
+  <footer><span>关闭窗口后，会在托盘继续运行。</span><div><button class="text-button" data-action="show-dot">打开 ChatGPT</button><button class="text-button" data-action="download" id="download">下载与更新</button><button class="text-button" data-action="quit">退出</button></div></footer>
+</main><script src="ui.js"></script></body></html>

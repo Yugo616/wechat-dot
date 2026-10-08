@@ -1,0 +1,39 @@
+{
+  "weixin": {
+    "baseUrl": "https://ilinkai.weixin.qq.com",
+    "cdnUrl": "https://novac2c.cdn.weixin.qq.com/c2c",
+    "botType": "3",
+    "appId": "bot",
+    "channelVersion": "2.4.9",
+    "requestTimeoutMs": 20000,
+    "longPollTimeoutMs": 40000,
+    "retryDelayMs": 3000,
+    "maxTextLength": 2000
+  },
+  "dot": {
+    "browser": "auto",
+    "browserExecutables": {
+      "darwin": ["/Applications/Google Chrome.app/Contents/MacOS/Google Chrome", "/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge", "{home}/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"],
+      "win32": ["{programFiles}/Google/Chrome/Application/chrome.exe", "{programFilesX86}/Microsoft/Edge/Application/msedge.exe", "{localAppData}/Google/Chrome/Application/chrome.exe"],
+      "linux": ["/usr/bin/google-chrome", "/usr/bin/chromium"]
+    },
+    "homeUrl": "https://chatgpt.com/",
+    "apiPrefixes": ["/backend-api", "/__codex-api"],
+    "primaryPath": "/tbo/primary",
+    "profilePath": "/tbo/by-thread/{threadId}",
+    "conversationPath": "/dots/{threadId}",
+    "sessionPath": "/api/auth/session",
+    "roomPath": "/messaging/rooms/{roomId}",
+    "messagesPath": "/messaging/rooms/{roomId}/messages",
+    "filesPath": "/messaging/rooms/{roomId}/files/{fileId}",
+    "transcribePath": "/transcribe",
+    "pollIntervalMs": 5000,
+    "requestTimeoutMs": 30000,
+    "sendTimeoutMs": 60000,
+    "historyPageSize": 50,
+    "composerSelectors": ["#prompt-textarea", "[contenteditable='true'][role='textbox']", "textarea"],
+    "sendSelectors": ["[data-testid='send-button']", "button[aria-label='Send message']", "button[aria-label='发送消息']", "button[aria-label='Send']", "button[aria-label='发送']"]
+  },
+  "storage": { "maxMediaBytes": 26214400, "mediaRetentionHours": 24, "completedHistoryLimit": 2000 },
+  "updates": { "releaseUrl": "https://github.com/Yugo616/wechat-dot/releases", "apiUrl": "https://api.github.com/repos/Yugo616/wechat-dot/releases", "timeoutMs": 5000 }
+}

@@ -1,0 +1,74 @@
+{
+  "name": "wechat-dot",
+  "version": "0.1.0-alpha.1",
+  "description": "在微信里和你的 dot 聊天。",
+  "private": true,
+  "license": "MIT",
+  "author": "Yugo616",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Yugo616/wechat-dot.git"
+  },
+  "main": "dist/main.cjs",
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "start": "npm run build && electron .",
+    "test": "node --import tsx --test tests/*.test.ts",
+    "typecheck": "tsc --noEmit",
+    "check": "npm run typecheck && npm test && npm run build",
+    "pack": "npm run build && electron-builder --dir",
+    "release": "npm run build && electron-builder --publish never",
+    "smoke": "node scripts/smoke.mjs"
+  },
+  "dependencies": {
+    "qrcode": "1.5.4",
+    "semver": "^7.8.5",
+    "silk-wasm": "3.7.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "@types/qrcode": "^1.5.0",
+    "@types/semver": "^7.8.0",
+    "electron": "44.7.0",
+    "electron-builder": "26.15.3",
+    "esbuild": "0.28.2",
+    "playwright-core": "1.64.0",
+    "tsx": "4.23.15",
+    "typescript": "7.0.2"
+  },
+  "build": {
+    "appId": "io.github.yugo616.wechatdot",
+    "productName": "WeChat Dot",
+    "directories": {
+      "output": "release",
+      "buildResources": "assets"
+    },
+    "files": [
+      "dist/**",
+      "config/defaults.json",
+      "assets/**",
+      "LICENSE",
+      "THIRD_PARTY_NOTICES.md"
+    ],
+    "asar": true,
+    "artifactName": "wechat-dot-${version}-${os}-${arch}.${ext}",
+    "mac": {
+      "category": "public.app-category.social-networking",
+      "target": [
+        "dmg",
+        "zip"
+      ]
+    },
+    "win": {
+      "target": [
+        "nsis"
+      ],
+      "signAndEditExecutable": false
+    },
+    "nsis": {
+      "oneClick": true,
+      "perMachine": false,
+      "deleteAppDataOnUninstall": false
+    }
+  }
+}

@@ -1,0 +1,35 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { normalizeDotMessage, collectNewMessages } from '../src/dot/protocol';
+
+test('dot participant messages are recognized even when the room uses a user-shaped envelope', () => {
+  const result = normalizeDotMessage({ id: 'd1', account_user_id: 'agent-member', created_at: '2026-10-08T01:00:00Z', content: { text: '完成了', attachments: [{ type: 'file', file_id: 'f1', file: { name: '报告.pdf', mime_type: 'application/pdf' } }] } }, new Set(['agent-member']));
+  assert.equal(result?.text, '完成了'); assert.equal(result?.attachments[0].name, '报告.pdf');
+  assert.equal(normalizeDotMessage({ id: 'u1', account_user_id: 'owner', content: { text: 'hi' } }, new Set(['agent-member'])), null);
+});
+
+test('projected reply excludes analysis, hidden parts and incomplete generations', () => {
+  const raw = { id: 'd2', created_at: '2026-10-08T01:00:00Z', generation: { status: 'in_progress' }, raw_messages: [
+    { author: { role: 'assistant' }, channel: 'analysis', content: { content_type: 'text', parts: ['private'] } },
+    { author: { role: 'assistant' }, channel: 'final', content: { content_type: 'text', parts: ['answer'] } },
+    { author: { role: 'assistant' }, metadata: { is_visually_hidden_from_conversation: true }, content: { content_type: 'text', parts: ['hidden'] } }
+  ], attachments: [] };
+  assert.equal(normalizeDotMessage(raw, new Set())?.complete, false);
+  const result = normalizeDotMessage({ ...raw, generation: { status: 'completed' } }, new Set());
+  assert.equal(result?.text, 'answer'); assert.equal(result?.complete, true);
+});
+
+test('history drains every page after the cursor instead of dropping burst messages', async () => {
+  const pages: Record<string, any> = { start: { items: [{ id: '1' }, { id: '2' }], next_cursor: '2' }, '2': { items: [{ id: '3' }], next_cursor: null } };
+  const items = await collectNewMessages('start', 2, async after => pages[after]);
+  assert.deepEqual(items.map(m => m.id), ['1', '2', '3']);
+});
+
+
+test('an initially empty room does not drop an entire page of new messages', async () => {
+  const result = await collectNewMessages('', 2, async (after, limit, before) => {
+    if (!before) return { items: [{ id: '3' }, { id: '4' }], prev_cursor: '3' };
+    return { items: [{ id: '1' }, { id: '2' }], prev_cursor: null };
+  });
+  assert.deepEqual(result.map(m => m.id), ['1', '2', '3', '4']);
+});

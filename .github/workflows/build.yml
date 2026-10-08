@@ -1,0 +1,90 @@
+name: Build installers
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-15
+            platform: mac
+            arch: arm64
+          - os: macos-15-intel
+            platform: mac
+            arch: x64
+          - os: windows-latest
+            platform: win
+            arch: x64
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run check
+      - run: npm run smoke
+      - run: node tests/desktop.mjs
+      - name: Test normal-browser connection
+        run: node tests/desktop.mjs
+        env:
+          WECHAT_DOT_TEST_BROWSER: external
+      - name: Package installer
+        run: npx electron-builder --${{ matrix.platform }} --${{ matrix.arch }} --publish never
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+      - name: Check Windows installation
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $installer = Get-ChildItem release -Filter '*.exe' | Select-Object -First 1
+          $target = Join-Path $env:RUNNER_TEMP 'wechat-dot-installed'
+          $process = Start-Process -FilePath $installer.FullName -ArgumentList '/S', "/D=$target" -Wait -PassThru
+          if ($process.ExitCode -ne 0) { throw "Installer exited $($process.ExitCode)" }
+          $app = Join-Path $target 'WeChat Dot.exe'
+          if (!(Test-Path $app)) { throw 'Installed executable missing' }
+          $env:WECHAT_DOT_EXECUTABLE = $app
+          npm run smoke
+          if ($LASTEXITCODE -ne 0) { throw 'Installed app did not launch' }
+      - name: Check macOS packaged application
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          APP=$(find release -maxdepth 2 -name 'WeChat Dot.app' -print -quit)
+          WECHAT_DOT_EXECUTABLE="$APP/Contents/MacOS/WeChat Dot" npm run smoke
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wechat-dot-${{ matrix.platform }}-${{ matrix.arch }}
+          path: |
+            release/*.dmg
+            release/*.zip
+            release/*.exe
+          if-no-files-found: error
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: installers
+          merge-multiple: true
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          FLAGS=()
+          if [[ "$TAG" == *-* ]]; then FLAGS+=(--prerelease); fi
+          gh release create "$TAG" installers/* --title "WeChat Dot $TAG" --generate-notes "${FLAGS[@]}"

@@ -1,0 +1,4 @@
+{
+  "dot": { "pollIntervalMs": 5000 },
+  "storage": { "maxMediaBytes": 26214400 }
+}
