@@ -87,7 +87,7 @@ try {
     await waitFor(() => sent.length === 3, 'A surviving browser could not be reconnected after a crash');
     assert.equal(sent[2].item_list[0].text_item.text, '意外退出后继续');
   }
-  console.log('PASS: real Electron UI, QR fixture, draft attachments, native text reply, dedup, restart, proactive message and external-browser crash recovery. These are local fixtures, not live accounts.');
+  console.log('PASS: real Electron UI, QR fixture, draft attachments, native text reply, dedup, restart and proactive message.' + (process.env.WECHAT_DOT_TEST_BROWSER === 'external' ? ' External-browser crash recovery also passed.' : '') + ' These are local fixtures, not live accounts.');
 } catch (e) {
   if (desktop) {
     for (const p of desktop.windows()) console.log('FIXTURE WINDOW', p.url());

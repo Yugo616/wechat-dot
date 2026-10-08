@@ -1,6 +1,6 @@
 在微信里和你的 dot 聊天。
 
-[下载安装包](https://github.com/Yugo616/wechat-dot/releases)
+[安装包（尚未发布）](https://github.com/Yugo616/wechat-dot/releases)
 
 1. 下载并打开：Mac 选 `.dmg`，Windows 选 `.exe`。
 2. 用微信扫码，在弹出的 Chrome／Edge 窗口登录 ChatGPT，然后点「登录完成」。
