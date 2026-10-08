@@ -81,7 +81,7 @@ export class DotBrowser extends EventEmitter {
     if (!port) {
       await this.stopManualBrowser();
       await rm(portFile, { force: true });
-      const child = this.child = spawn(executable, [`--user-data-dir=${directory}`, '--remote-debugging-port=0', '--remote-debugging-address=127.0.0.1', '--no-first-run', '--no-default-browser-check', `--app=${this.config.homeUrl}`], { stdio: 'ignore' });
+      const child = this.child = spawn(executable, [`--user-data-dir=${directory}`, '--remote-debugging-port=0', '--remote-debugging-address=127.0.0.1', '--no-first-run', '--no-default-browser-check', ...this.config.backgroundArguments, `--app=${this.config.homeUrl}`], { stdio: 'ignore' });
       child.on('error', e => { failed = e; });
     }
     const end = Date.now() + this.config.requestTimeoutMs;

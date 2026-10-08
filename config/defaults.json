@@ -14,6 +14,7 @@
   "dot": {
     "browser": "external",
     "browserProbeTimeoutMs": 1000,
+    "backgroundArguments": ["--disable-background-timer-throttling", "--disable-backgrounding-occluded-windows", "--disable-renderer-backgrounding"],
     "browserExecutables": {
       "darwin": ["/Applications/Google Chrome.app/Contents/MacOS/Google Chrome", "/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge", "{home}/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"],
       "win32": ["{programFiles}/Google/Chrome/Application/chrome.exe", "{programFilesX86}/Microsoft/Edge/Application/msedge.exe", "{localAppData}/Google/Chrome/Application/chrome.exe"],
