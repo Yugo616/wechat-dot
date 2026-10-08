@@ -42,6 +42,12 @@ npm run release
 
 Chrome 扩展的源文件位于 `src/extension`，构建输出在 `dist/extension`，安装包同时携带可加载的扩展文件夹。扩展尚未上架，开发版需要手动加载；还不能称为一键安装。旧的独立浏览器适配保留供排查，内嵌模式用于本地接口测试，两者都不是默认登录入口。
 
+这套扩展流程仅用于开发验证，不是用户安装方案。调试时，在 Chrome 的 `chrome://extensions` 开启开发者模式，加载 `dist/extension`，再在扩展里连接本地程序。正式安装不能要求用户做这些操作。
+
+2026-10-08 重新核对安装限制：[Chrome 官方文档](https://developer.chrome.com/docs/extensions/how-to/distribute/install-extensions)要求 macOS／Windows 的常规扩展分发使用 Chrome Web Store，即使由其他软件协助安装也需要用户确认。把未上架扩展放进安装包，不能自动变成普通用户可直接安装的版本。
+
+OpenAI 的 [Sign in with ChatGPT](https://developers.openai.com/siwc/token-sharing-open-source)允许开源程序通过系统浏览器授权使用 ChatGPT 套餐，但明确不授予原有聊天及其他账户上下文。[支持的调用入口](https://developers.openai.com/siwc/token-sharing-open-source/models-and-inference)是 Responses API，不是 ChatGPT backend-api。因此不能把这个登录流程直接当成已验证的原有 dot 接入，也不能用一个新建聊天替代用户原来的 dot。
+
 ## 为什么当前没有改成 ChatGPT 插件
 
 2026-10-08 已检查当前账号的自定义 MCP 入口。官方 [MCP Events](https://developers.openai.com/plugins/build/mcp-events) 支持向 dot 推送事件，但[接入 ChatGPT](https://developers.openai.com/plugins/deploy/connect-chatgpt) 需要公网 HTTPS 服务或 Secure MCP Tunnel。[官方通道](https://developers.openai.com/api/docs/guides/secure-mcp-tunnels) 还需要 Platform 通道 ID 和运行凭据。直接把本地桥接包成插件，会增加服务部署或通道配置，暂时不能满足本项目的三步安装。
