@@ -15,7 +15,7 @@ function render(s: AppStatus) {
   el('detail').textContent = problem || s.detail;
   el('detail').classList.toggle('problem', Boolean(problem));
   el('weixin-button').textContent = s.weixin === 'idle' ? '微信扫码' : '重新扫码';
-  el('dot-button').textContent = s.dot === 'ready' ? '重新登录' : '登录 ChatGPT';
+  el('dot-button').textContent = s.extension ? '连接 Chrome' : s.dot === 'ready' ? '重新登录' : '登录 ChatGPT';
   const qr = el('qr') as HTMLImageElement; if (s.qr) qr.src = s.qr; else qr.removeAttribute('src');
   el('qr-area').hidden = !s.qr; el('verify-area').hidden = !s.verifyRequired;
   el('toggle').dataset.action = s.running ? 'pause' : 'start';
@@ -25,6 +25,7 @@ function render(s: AppStatus) {
   el('status-dot').classList.toggle('problem', Boolean(problem || s.needsReview));
   el('review').hidden = !s.needsReview;
   el('finish-login').hidden = !s.finishLogin;
+  el('extension-area').hidden = !s.extension;
   el('dot-actions').hidden = s.dot === 'idle' || Boolean(s.finishLogin);
   el('download').textContent = s.updateUrl ? '下载新版本' : '下载与更新';
   for (const button of document.querySelectorAll<HTMLButtonElement>('button[data-action]')) {

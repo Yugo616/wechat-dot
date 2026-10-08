@@ -8,6 +8,7 @@ import { StateStore } from './state';
 import { WeixinClient } from './weixin/client';
 import { DotClient } from './dot/client';
 import { DotAccessError } from './dot/errors';
+import { sameDotConnection } from './dot/profile';
 import { Bridge } from './bridge';
 import type { AppStatus } from './types';
 
@@ -24,7 +25,7 @@ async function run(): Promise<void> {
   const dot = new DotClient(config.dot);
   let quitting = false, qrController: AbortController | undefined, verifyCode = '', discoveryBusy = false;
   let status: AppStatus = { weixin: store.data.weixin ? 'ready' : 'idle', dot: 'idle', running: false,
-    weixinDetail: store.data.weixin ? '微信已登录' : '用手机微信扫码', dotDetail: '在浏览器中登录 ChatGPT', detail: '先连接微信和 ChatGPT。', version: app.getVersion() };
+    weixinDetail: store.data.weixin ? '微信已登录' : '用手机微信扫码', dotDetail: config.dot.browser === 'extension' ? '使用平常 Chrome 里的账号' : '在浏览器中登录 ChatGPT', detail: '先连接微信和 ChatGPT。', version: app.getVersion(), extension: config.dot.browser === 'extension' };
   const resumeInBackground = Boolean(store.data.enabled && store.data.weixin && store.data.dot);
   const window = new BrowserWindow({ width: config.desktop.windowWidth, height: config.desktop.minContentHeight, useContentSize: true,
     show: false, resizable: false, maximizable: false, fullscreenable: false, title: 'WeChat Dot', backgroundColor: '#f5f5f5',
@@ -79,10 +80,11 @@ async function run(): Promise<void> {
     try {
       const profile = await dot.discover();
       const previous = store.data.dot;
-      if (previous && (previous.roomId !== profile.roomId || previous.userId !== profile.userId || previous.accountId !== profile.accountId)) {
+      if (previous && !sameDotConnection(previous, profile)) {
         await bridge.pause();
       }
       await store.connectDot(profile);
+      dot.profile = store.data.dot;
       publish({ dot: 'ready', dotName: profile.name, dotDetail: profile.name, detail: '准备好了，点击开始连接。', problem: undefined });
       if (store.data.enabled && store.data.weixin && !status.running) await bridge.start();
     } catch (e) {
@@ -138,12 +140,21 @@ async function run(): Promise<void> {
       if (name === 'dot') {
         await bridge.pause(); publish({ dot: 'waiting', dotDetail: '请在浏览器中完成 ChatGPT 登录', problem: undefined });
         const manual = await dot.login();
-        publish({ finishLogin: manual, dotDetail: manual ? '登录后，点击下方「登录完成」' : '请在 ChatGPT 窗口完成登录' });
+        publish({ finishLogin: manual, dotDetail: status.extension ? '打开 Chrome 扩展，点击「连接 dot」' : manual ? '登录后，点击下方「登录完成」' : '请在 ChatGPT 窗口完成登录' });
         if (!manual) await discover();
       }
       if (name === 'finish-login') { await dot.finishLogin(); publish({ finishLogin: false }); await discover(); }
       if (name === 'show-dot') await dot.showConversation();
       if (name === 'discover') await discover();
+      if (name === 'extension') {
+        if (!dot.window) {
+          publish({ dot: 'waiting', dotDetail: '打开 Chrome 扩展，点击「连接 dot」' });
+          await dot.open(false);
+        }
+        const directory = app.isPackaged ? join(process.resourcesPath, 'chrome-extension') : join(app.getAppPath(), 'dist', 'extension');
+        await shell.openPath(directory);
+        publish({ detail: '在 Chrome 扩展页打开「开发者模式」，点击「加载已解压的扩展」，选择这个文件夹。' });
+      }
       if (name === 'start') { publish({ problem: undefined }); await bridge.start(); }
       if (name === 'pause') await bridge.pause();
       if (name === 'received' || name === 'retry') await bridge.resolveUncertain(name === 'retry');

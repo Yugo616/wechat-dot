@@ -40,3 +40,43 @@ test('switching away and back restores uncertain work only for the original pair
   const reopened = new StateStore(directory); await reopened.load();
   assert.equal(reopened.data.inbound[0].phase, 'sending');
 });
+
+test('learning an optional account ID keeps the same user and room progress through restart', async t => {
+  const directory = await mkdtemp(join(tmpdir(), 'wechat-dot-account-'));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const store = new StateStore(directory); await store.load();
+  const dot = { id: 'dot', name: 'Dot', roomId: 'room', userId: 'user', accountId: '', url: '' };
+  await store.connectWeixin({ token: 'fake', userId: 'wx-owner', botId: 'bot', baseUrl: '' });
+  await store.connectDot(dot);
+  await store.update(s => { s.enabled = true; s.dotCursor = 'cursor'; s.inbound = [{ id: 'pending', phase: 'pending', message: {} }]; });
+  await store.connectDot({ ...dot, accountId: 'account' });
+  assert.equal(store.data.enabled, true);
+  assert.equal(store.data.inbound[0]?.id, 'pending');
+  const reopened = new StateStore(directory); await reopened.load();
+  await reopened.connectDot(dot);
+  assert.equal(reopened.data.dot?.accountId, 'account');
+  assert.equal(reopened.data.dotCursor, 'cursor');
+  assert.equal(reopened.data.inbound[0]?.id, 'pending');
+  await reopened.connectDot({ ...dot, accountId: 'different-account' });
+  assert.equal(reopened.data.enabled, false);
+  assert.equal(reopened.data.inbound.length, 0);
+});
+
+test('returning to a saved room without account metadata restores its pending work before startup', async t => {
+  const directory = await mkdtemp(join(tmpdir(), 'wechat-dot-return-'));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const store = new StateStore(directory); await store.load();
+  const a = { id: 'a', name: 'A', roomId: 'room-a', userId: 'user-a', accountId: 'account-a', url: '' };
+  const b = { ...a, id: 'b', roomId: 'room-b', userId: 'user-b', accountId: 'account-b' };
+  await store.connectWeixin({ token: 'fake', userId: 'wx-owner', botId: 'bot', baseUrl: '' });
+  await store.connectDot(a);
+  await store.update(s => { s.dotCursor = 'cursor-a'; s.inbound = [{ id: 'uncertain', phase: 'sending', requestId: 'native-a', message: {} }]; });
+  await store.connectDot(b);
+  const reopened = new StateStore(directory); await reopened.load();
+  await reopened.connectDot({ ...a, accountId: '' });
+  assert.equal(reopened.data.dot?.accountId, 'account-a');
+  assert.equal(reopened.data.dotCursor, 'cursor-a');
+  assert.equal(reopened.data.inbound[0]?.requestId, 'native-a');
+  await reopened.connectDot(a);
+  assert.equal(reopened.data.inbound[0]?.phase, 'sending');
+});

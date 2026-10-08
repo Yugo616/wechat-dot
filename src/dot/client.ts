@@ -4,6 +4,8 @@ import type { Config } from '../config';
 import type { DotProfile, LocalFile } from '../types';
 import { collectNewMessages, messageBaseline } from './protocol';
 import { DotAccessError } from './errors';
+import { ExtensionBrowser } from './extension-browser';
+import { sameDotConnection } from './profile';
 
 export class DotClient extends EventEmitter {
   window?: DotBrowser;
@@ -14,10 +16,11 @@ export class DotClient extends EventEmitter {
   private posts = new Map<string, { requestId: string; text: string }>();
   private pending?: { text: string; resolve: (id: string) => void; reject: (e: Error) => void; onRequest: (id: string) => Promise<void> };
   constructor(readonly config: Config['dot']) { super(); this.prefix = config.apiPrefixes[0]; }
+  private createBrowser(): DotBrowser { return this.config.browser === 'extension' ? new ExtensionBrowser(this.config) : new DotBrowser(this.config); }
 
   async login(): Promise<boolean> {
     await this.dispose(); this.profile = undefined;
-    const browser = this.window = new DotBrowser(this.config);
+    const browser = this.window = this.createBrowser();
     this.listen(browser);
     await browser.login();
     return browser.manualLogin;
@@ -32,7 +35,7 @@ export class DotClient extends EventEmitter {
 
   async open(show = true): Promise<void> {
     if (this.window) { if (show) await this.window.show(); return; }
-    const browser = this.window = new DotBrowser(this.config);
+    const browser = this.window = this.createBrowser();
     this.listen(browser);
     try { await browser.open(show); } catch (e) { this.window = undefined; await browser.dispose(); throw e; }
   }
@@ -74,10 +77,7 @@ export class DotClient extends EventEmitter {
   async api(path: string): Promise<any> {
     if (!this.window) throw new Error('请先登录 ChatGPT。');
     const url = new URL(this.prefix + path, this.config.homeUrl).href;
-    const result = await this.window.evaluate(`(async () => {
-      const r = await fetch(${JSON.stringify(url)}, {credentials:'include',headers:${JSON.stringify(this.headers)},signal:AbortSignal.timeout(${this.config.requestTimeoutMs})});
-      return {status:r.status, text:await r.text()};
-    })()`);
+    const result = await this.window.run('request', { url, headers: this.headers, timeoutMs: this.config.requestTimeoutMs });
     if (result.status === 401 || result.status === 403) throw new DotAccessError(result.status);
     if (result.status >= 400) throw new Error(`ChatGPT 请求失败（HTTP ${result.status}），请打开 ChatGPT 检查。`);
     try { return JSON.parse(result.text); } catch { throw new Error('ChatGPT 页面尚未就绪，请完成登录。'); }
@@ -86,11 +86,11 @@ export class DotClient extends EventEmitter {
     if (this.window?.manualLogin) throw new Error('在 Chrome 中登录后，点击「登录完成，识别 dot」。');
     await this.open(false);
     if (new URL(await this.window!.url()).origin !== new URL(this.config.homeUrl).origin) throw new Error('请在浏览器中完成 ChatGPT 登录。');
-    const session = await this.window!.evaluate(`fetch(${JSON.stringify(this.config.sessionPath)}, {credentials:'include'}).then(async r=>({status:r.status,body:await r.text()}))`);
+    const session = await this.window!.run('request', { url: this.config.sessionPath, timeoutMs: this.config.requestTimeoutMs });
     if (session.status === 401 || session.status === 403) throw new DotAccessError(session.status);
-    const login = JSON.parse(session.body);
-    if (login.accessToken) this.headers.authorization = `Bearer ${login.accessToken}`;
-    if (!this.headers.authorization) throw new DotAccessError(401);
+    const login = JSON.parse(session.text);
+    if (!login.accessToken) { delete this.headers.authorization; throw new DotAccessError(401); }
+    this.headers.authorization = `Bearer ${login.accessToken}`;
     const primary = await this.api(this.config.primaryPath);
     const selection = primary.selection;
     if (!selection?.available || !selection.thread_id) throw new Error('这个账号还没有可用的 dot，请先在 ChatGPT 中打开自己的 dot。');
@@ -100,7 +100,8 @@ export class DotClient extends EventEmitter {
     const found: DotProfile = { id: profile.id ?? selection.aeon_id, name: profile.display_name || '我的 dot', roomId,
       accountId: this.headers['chatgpt-account-id'] ?? login.account?.id ?? '', userId: login.user?.id ?? '',
       url: new URL(this.config.conversationPath.replace('{threadId}', encodeURIComponent(selection.thread_id)), this.config.homeUrl).href };
-    if (this.profile && (this.profile.roomId !== found.roomId || this.profile.userId !== found.userId || this.profile.accountId !== found.accountId)) throw new Error('ChatGPT 账号或 dot 已切换，请暂停连接后重新登录。');
+    if (this.profile && !sameDotConnection(this.profile, found)) throw new Error('ChatGPT 账号或 dot 已切换，请暂停连接后重新登录。');
+    found.accountId ||= this.profile?.accountId ?? '';
     this.profile = found;
     const room = await this.api(this.path(this.config.roomPath));
     this.members = new Set((room.members ?? []).filter((m: any) => m.aeon_id === found.id).map((m: any) => m.account_user_id));
@@ -134,19 +135,7 @@ export class DotClient extends EventEmitter {
     await this.discover();
     const page = this.window;
     if (await page.url() !== this.profile.url) await this.window.navigate(this.profile.url);
-    const selectors = JSON.stringify(this.config.composerSelectors);
-    const ready = await page.evaluate(`(() => {
-      const e = ${selectors}.map(s=>document.querySelector(s)).find(e=>e && e.getBoundingClientRect().height>0);
-      if(!e) return 'missing';
-      if((e.value ?? e.innerText ?? '').trim()) return 'draft';
-      const form = e.closest('form') ?? e.parentElement;
-      for(const selector of ${JSON.stringify(this.config.draftAttachmentSelectors)}) {
-        for(const item of form?.querySelectorAll(selector) ?? []) {
-          if(item instanceof HTMLInputElement ? item.files?.length : item.getBoundingClientRect().height > 0) return 'attachment';
-        }
-      }
-      e.focus(); return 'ready';
-    })()`);
+    const ready = await page.run('composer', { composerSelectors: this.config.composerSelectors, attachmentSelectors: this.config.draftAttachmentSelectors });
     if (ready === 'attachment') throw new Error('ChatGPT 输入框里有附件或正在上传的文件，请先处理完再继续。');
     if (ready !== 'ready') throw new Error(ready === 'draft' ? 'ChatGPT 输入框里有未发送内容，请先发送或清空，再继续连接。' : '找不到 dot 输入框，请打开 ChatGPT，等页面加载完成后重试。');
     await beforeSubmit();
@@ -157,10 +146,7 @@ export class DotClient extends EventEmitter {
         this.pending = { text, resolve, reject, onRequest };
         timer = setTimeout(() => reject(new Error('ChatGPT 发送结果还未确认，请打开 ChatGPT 核对这一条消息。')), this.config.sendTimeoutMs);
       });
-      const clicked = await page.evaluate(`(() => {
-        const e = ${JSON.stringify(this.config.sendSelectors)}.map(s=>document.querySelector(s)).find(e=>e && !e.disabled && e.getBoundingClientRect().height>0);
-        if(!e) return false; e.click(); return true;
-      })()`);
+      const clicked = await page.run('send', { sendSelectors: this.config.sendSelectors });
       if (!clicked) this.pending!.reject(new Error('ChatGPT 发送按钮尚未就绪，请在 ChatGPT 中检查。'));
       return await result;
     } finally { clearTimeout(timer); this.pending = undefined; }

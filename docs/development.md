@@ -16,7 +16,7 @@ npm run release
 
 `check` 跑类型检查、单元测试和编译；`smoke` 打开真实窗口；`desktop.mjs` 用临时目录和本地接口验证文字、去重、重启、主动回复和托盘运行。
 
-程序使用系统的应用数据目录。里面的 `state.json` 保存微信凭据、dot 标识、消息队列和收取位置，`ChatGPT Browser` 保存独立的 Chrome／Edge 会话（内嵌浏览器模式使用 `Partitions/chatgpt`）。发布目录只包含程序资源，不包含这些文件。
+程序使用系统的应用数据目录。里面的 `state.json` 保存微信凭据、dot 标识、消息队列和收取位置。ChatGPT 登录由使用者平常的 Chrome 保存。旧版留下的 `ChatGPT Browser` 资料会保留，扩展不读取它。发布目录只包含程序资源。
 
 通常不用改配置。需要调试时，把 `config/example.json` 复制到应用数据目录，命名为 `config.json`。默认地址、超时和限制都在 `config/defaults.json`。
 
@@ -26,23 +26,34 @@ npm run release
 
 ## dot
 
-`src/dot/client.ts` 集中处理网页适配。先通过独立 Chrome／Edge 资料正常登录，登录阶段不连接调试协议。使用者点击「登录完成」后，程序关闭该独立窗口，再用同一份资料连接浏览器，读取当前 dot 和消息房间。发消息时填写网页输入框并点击网页发送按钮；请求准备由原网页完成。程序观察请求 ID 和响应，完整回复才进入微信发送队列。
+`src/dot/client.ts` 集中处理网页适配。默认通过 Chrome 扩展使用现有登录状态。扩展创建自己的 ChatGPT 标签页；本地程序通过回环 WebSocket 请求读取 dot、检查输入框或发送文字。页面操作集中在 `src/dot/page.ts`，扩展执行打包好的方法，不接收任意脚本。
+
+扩展只申请 ChatGPT 网站权限，消息监听只在 dot 页面运行，并只转发自己创建的标签页。连接地址、扩展公钥和超时在配置中。服务只监听 `127.0.0.1`，只接受对应扩展 Origin。会话信息仅在这台电脑的 Chrome 与程序之间传递；没有中转服务器。
+
+发送仍使用网页输入框和发送按钮，由原网页准备请求。扩展观察原始请求 ID 和响应，完整回复才进入微信发送队列。程序重启后扩展会自动重连，通常在一分钟内。
 
 接口结构参考本机 ChatGPT 26.1002.52244 的客户端资源。适配器没有复制或打包这些资源。当前路径见配置；线上兼容性以验证记录为准。
 
-2026-10-08 真实账号曾识别到 dot，随后反复遇到人机验证。当前浏览器方案尚未通过真实收发，不能视为已解决登录。遇到 HTTP 401／403 时暂停连接和自动识别，保留消息队列，等待用户明确操作。
+2026-10-08，独立浏览器实测反复遇到人机验证，平常的 Chrome 可以正常打开原 dot。因此默认改用扩展；真实收发仍待验证。遇到 HTTP 401／403 时暂停连接和自动识别，保留消息队列，等待用户明确操作。
 
 ## 窗口与后台运行
 
 首次打开显示连接窗口。开始连接后收起；再次启动时，如果上次仍在连接，就在后台恢复。菜单栏／托盘提供连接设置、暂停、重新登录和退出。窗口随二维码、登录提示和错误内容调整高度，边界配置在 `desktop` 中。
 
-默认使用普通 Chrome／Edge 登录，不再自动回退到会被 Google 拒绝的内嵌登录窗口。内嵌模式仍可用于本地接口测试。浏览器会话和桥接进程都运行在安装者电脑上；连接后专用浏览器最小化，打开 dot 时恢复。
+Chrome 扩展的源文件位于 `src/extension`，构建输出在 `dist/extension`，安装包同时携带可加载的扩展文件夹。扩展尚未上架，开发版需要手动加载；还不能称为一键安装。旧的独立浏览器适配保留供排查，内嵌模式用于本地接口测试，两者都不是默认登录入口。
 
 ## 为什么当前没有改成 ChatGPT 插件
 
 2026-10-08 已检查当前账号的自定义 MCP 入口。官方 [MCP Events](https://developers.openai.com/plugins/build/mcp-events) 支持向 dot 推送事件，但[接入 ChatGPT](https://developers.openai.com/plugins/deploy/connect-chatgpt) 需要公网 HTTPS 服务或 Secure MCP Tunnel。[官方通道](https://developers.openai.com/api/docs/guides/secure-mcp-tunnels) 还需要 Platform 通道 ID 和运行凭据。直接把本地桥接包成插件，会增加服务部署或通道配置，暂时不能满足本项目的三步安装。
 
-本版已缩小设置窗口，但本地浏览器方案在真实验证中受阻。官方插件仍是待验证的替代方案；仅把代码放进插件目录不能提供 dot 的事件入口。[插件打包文档](https://developers.openai.com/plugins/build/plugins#bundled-mcp-servers-and-lifecycle-hooks) 要求远程 HTTPS 服务；本地 MCP 支持需要另外联系 OpenAI。未实现或验证 MCP Events 收发，也没有加入中转服务或要求使用者配置 API Key。
+Chrome 扩展和 ChatGPT MCP 插件是不同入口。MCP Events 仍是待验证的替代方案；仅把代码放进插件目录不能提供云端 dot 的事件入口。[插件打包文档](https://developers.openai.com/plugins/build/plugins#bundled-mcp-servers-and-lifecycle-hooks) 要求远程 HTTPS 服务；本地 MCP 支持需要另外联系 OpenAI。未实现或验证 MCP Events 收发，也没有加入中转服务或要求使用者配置 API Key。
+
+扩展实现参考 Chrome 的[页面脚本](https://developer.chrome.com/docs/extensions/develop/concepts/content-scripts)和[后台 WebSocket](https://developer.chrome.com/docs/extensions/how-to/web-platform/websockets)文档。测试使用临时浏览器资料及只允许 localhost 的临时扩展：
+
+```sh
+npx playwright-core install chromium
+WECHAT_DOT_TEST_BROWSER=extension node tests/desktop.mjs
+```
 
 ## 发布
 

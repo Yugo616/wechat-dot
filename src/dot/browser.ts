@@ -6,6 +6,7 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import type { Config } from '../config';
+import { dotPageAction, pageResult } from './page';
 
 // The full browser owns an independent profile. Electron remains the desktop shell.
 export class DotBrowser extends EventEmitter {
@@ -136,6 +137,9 @@ export class DotBrowser extends EventEmitter {
     const result = await this.command('Runtime.evaluate', { expression, awaitPromise: true, returnByValue: true, userGesture: true });
     if (result.exceptionDetails) throw new Error('ChatGPT 页面未就绪，请先完成登录。');
     return result.result?.value;
+  }
+  async run(action: string, args: any = {}): Promise<any> {
+    return pageResult(await this.evaluate(`(${dotPageAction.toString()})(${JSON.stringify(action)},${JSON.stringify(args)})`));
   }
   async navigate(url: string): Promise<void> {
     if (this.embedded) { await this.embedded.loadURL(url); return; }

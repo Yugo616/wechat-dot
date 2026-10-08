@@ -12,7 +12,8 @@
     "maxTextLength": 2000
   },
   "dot": {
-    "browser": "external",
+    "browser": "extension",
+    "extension": {"port":43127,"heartbeatMs":20000,"maxPayloadBytes":8388608,"publicKey":"MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA1abP+ZnVxS4s/RLU7kw4Gg0ujfV82oE0aZWyFhQxcJ2cQ63H6HWuvyjLpLQml9khQNYOPN08x+hi6GTpchtwS3omvIwhc1qVLd1IfUNIMujKHDTzvUXzZaXyz5A+Sgp9ljrmsB+Eon7+EVPl5aXIaPDxf/VxM9k5IFO5rLASko7/wshdopQLEz6mRIvKVFJWok3zJ2o8HuEHR00h0FC/81iSySHicEm9lbcbTHtDuU95CiGj++VLP1UC1qMyrtrV75hjkcCUtFkTOIXty2ZhJvkpmH3Md4QWoR5VDkrPp6jriuS5Vl+vdT+GoratKBOejbvJ4AmawFQemp+OieZEMwIDAQAB"},
     "browserProbeTimeoutMs": 1000,
     "backgroundArguments": ["--disable-background-timer-throttling", "--disable-backgrounding-occluded-windows", "--disable-renderer-backgrounding"],
     "browserExecutables": {
