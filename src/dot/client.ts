@@ -3,6 +3,7 @@ import { EventEmitter } from 'node:events';
 import type { Config } from '../config';
 import type { DotProfile, LocalFile } from '../types';
 import { collectNewMessages, messageBaseline } from './protocol';
+import { DotAccessError } from './errors';
 
 export class DotClient extends EventEmitter {
   window?: DotBrowser;
@@ -77,7 +78,7 @@ export class DotClient extends EventEmitter {
       const r = await fetch(${JSON.stringify(url)}, {credentials:'include',headers:${JSON.stringify(this.headers)},signal:AbortSignal.timeout(${this.config.requestTimeoutMs})});
       return {status:r.status, text:await r.text()};
     })()`);
-    if (result.status === 401 || result.status === 403) throw new Error('请打开 ChatGPT，完成登录或页面上的验证。');
+    if (result.status === 401 || result.status === 403) throw new DotAccessError(result.status);
     if (result.status >= 400) throw new Error(`ChatGPT 请求失败（HTTP ${result.status}），请打开 ChatGPT 检查。`);
     try { return JSON.parse(result.text); } catch { throw new Error('ChatGPT 页面尚未就绪，请完成登录。'); }
   }
@@ -85,9 +86,11 @@ export class DotClient extends EventEmitter {
     if (this.window?.manualLogin) throw new Error('在 Chrome 中登录后，点击「登录完成，识别 dot」。');
     await this.open(false);
     if (new URL(await this.window!.url()).origin !== new URL(this.config.homeUrl).origin) throw new Error('请在浏览器中完成 ChatGPT 登录。');
-    const login = await this.window!.evaluate(`fetch(${JSON.stringify(this.config.sessionPath)}, {credentials:'include'}).then(r=>r.json())`);
+    const session = await this.window!.evaluate(`fetch(${JSON.stringify(this.config.sessionPath)}, {credentials:'include'}).then(async r=>({status:r.status,body:await r.text()}))`);
+    if (session.status === 401 || session.status === 403) throw new DotAccessError(session.status);
+    const login = JSON.parse(session.body);
     if (login.accessToken) this.headers.authorization = `Bearer ${login.accessToken}`;
-    if (!this.headers.authorization) throw new Error('请在 ChatGPT 窗口完成登录。');
+    if (!this.headers.authorization) throw new DotAccessError(401);
     const primary = await this.api(this.config.primaryPath);
     const selection = primary.selection;
     if (!selection?.available || !selection.thread_id) throw new Error('这个账号还没有可用的 dot，请先在 ChatGPT 中打开自己的 dot。');

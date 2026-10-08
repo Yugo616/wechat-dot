@@ -30,6 +30,8 @@ npm run release
 
 接口结构参考本机 ChatGPT 26.1002.52244 的客户端资源。适配器没有复制或打包这些资源。当前路径见配置；线上兼容性以验证记录为准。
 
+2026-10-08 真实账号曾识别到 dot，随后反复遇到人机验证。当前浏览器方案尚未通过真实收发，不能视为已解决登录。遇到 HTTP 401／403 时暂停连接和自动识别，保留消息队列，等待用户明确操作。
+
 ## 窗口与后台运行
 
 首次打开显示连接窗口。开始连接后收起；再次启动时，如果上次仍在连接，就在后台恢复。菜单栏／托盘提供连接设置、暂停、重新登录和退出。窗口随二维码、登录提示和错误内容调整高度，边界配置在 `desktop` 中。
@@ -40,7 +42,7 @@ npm run release
 
 2026-10-08 已检查当前账号的自定义 MCP 入口。官方 [MCP Events](https://developers.openai.com/plugins/build/mcp-events) 支持向 dot 推送事件，但[接入 ChatGPT](https://developers.openai.com/plugins/deploy/connect-chatgpt) 需要公网 HTTPS 服务或 Secure MCP Tunnel。[官方通道](https://developers.openai.com/api/docs/guides/secure-mcp-tunnels) 还需要 Platform 通道 ID 和运行凭据。直接把本地桥接包成插件，会增加服务部署或通道配置，暂时不能满足本项目的三步安装。
 
-本版保留本地桥接，缩小设置窗口。未实现或验证 MCP Events 收发，也没有要求使用者配置 API Key。后续若能提供无需额外配置的固定通道，再单独验证事件是否进入原有 dot、主动回复和附件能否正常往返。
+本版已缩小设置窗口，但本地浏览器方案在真实验证中受阻。官方插件仍是待验证的替代方案；仅把代码放进插件目录不能提供 dot 的事件入口。[插件打包文档](https://developers.openai.com/plugins/build/plugins#bundled-mcp-servers-and-lifecycle-hooks) 要求远程 HTTPS 服务；本地 MCP 支持需要另外联系 OpenAI。未实现或验证 MCP Events 收发，也没有加入中转服务或要求使用者配置 API Key。
 
 ## 发布
 

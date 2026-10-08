@@ -7,6 +7,7 @@ import { loadConfig } from './config';
 import { StateStore } from './state';
 import { WeixinClient } from './weixin/client';
 import { DotClient } from './dot/client';
+import { DotAccessError } from './dot/errors';
 import { Bridge } from './bridge';
 import type { AppStatus } from './types';
 
@@ -37,6 +38,7 @@ async function run(): Promise<void> {
   window.once('ready-to-show', () => { if (!resumeInBackground) show(); });
   function publish(patch: Partial<AppStatus>): void {
     const wasRunning = status.running;
+    const hadDotError = status.dot === 'error';
     status = { ...status, ...patch };
     if (!window.isDestroyed()) window.webContents.send('status', status);
     const needsAttention = Boolean(status.problem || status.needsReview || status.weixin === 'error' || status.dot === 'error');
@@ -59,6 +61,7 @@ async function run(): Promise<void> {
       window.hide();
       void dot.window?.hide().catch(() => {});
     }
+    if (status.dot === 'error' && !hadDotError) show();
   }
   const bridge = new Bridge(store, weixin, dot, config, publish);
   window.on('close', e => { if (!quitting) { e.preventDefault(); window.hide(); } });
@@ -82,10 +85,15 @@ async function run(): Promise<void> {
       await store.connectDot(profile);
       publish({ dot: 'ready', dotName: profile.name, dotDetail: profile.name, detail: '准备好了，点击开始连接。', problem: undefined });
       if (store.data.enabled && store.data.weixin && !status.running) await bridge.start();
-    } catch (e) { publish({ dot: 'waiting', dotDetail: (e as Error).message }); }
+    } catch (e) {
+      if (e instanceof DotAccessError) {
+        await bridge.pause();
+        publish({ dot: 'error', dotDetail: e.message, problem: e.message });
+      } else publish({ dot: 'waiting', dotDetail: (e as Error).message });
+    }
     finally { discoveryBusy = false; }
   }
-  dot.on('loaded', () => { if (status.dot !== 'ready') void discover(); });
+  dot.on('loaded', () => { if (status.dot === 'waiting') void discover(); });
   const discoveryTimer = setInterval(() => { if (status.dot === 'waiting') void discover(); }, config.dot.pollIntervalMs);
   app.on('will-quit', () => clearInterval(discoveryTimer));
 

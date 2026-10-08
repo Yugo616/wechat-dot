@@ -8,6 +8,7 @@ import assert from 'node:assert/strict';
 const data = await mkdtemp(join(tmpdir(), 'wechat-dot-desktop-'));
 let draftAttachment = true;
 let draftPolls = 0, lastDraftPoll;
+let deniedStatus = 0, dotRequests = 0;
 const requests = [];
 let incoming = [], sent = [], nativeSends = [], messages = [{ id: 'old', account_user_id: 'dot-member', content: { text: '不应重发的历史' } }];
 const server = createServer(async (req, res) => {
@@ -16,6 +17,10 @@ const server = createServer(async (req, res) => {
   const parts = []; for await (const b of req) parts.push(b);
   const body = Buffer.concat(parts).toString();
   res.setHeader('Content-Type', 'application/json');
+  if (url.pathname.startsWith('/backend-api/')) {
+    dotRequests++;
+    if (deniedStatus) { res.statusCode = deniedStatus; return res.end('{"error":"access denied"}'); }
+  }
   if (url.pathname === '/ilink/bot/get_bot_qrcode') return res.end(JSON.stringify({ qrcode: 'fixture-qr', qrcode_img_content: base }));
   if (url.pathname === '/ilink/bot/get_qrcode_status') return res.end(JSON.stringify({ status: 'confirmed', bot_token: 'fixture-weixin', ilink_bot_id: 'fixture-bot', ilink_user_id: 'fixture-owner', baseurl: base }));
   if (url.pathname === '/ilink/bot/getupdates') { const msgs = incoming.splice(0); return res.end(JSON.stringify({ ret: 0, msgs, get_updates_buf: 'cursor' })); }
@@ -108,6 +113,28 @@ try {
   await (await desktop.firstWindow()).getByRole('button', { name: '暂停连接', exact: true }).click();
   await (await desktop.firstWindow()).getByRole('button', { name: '开始连接', exact: true }).waitFor();
   assert.equal(await setupVisible(), true, 'Pausing should keep the settings open');
+  const settings = await desktop.firstWindow();
+  for (const code of [403, 401]) {
+    deniedStatus = code;
+    await settings.evaluate(() => window.wechatDot.action('discover'));
+    await waitFor(async () => (await settings.evaluate(() => window.wechatDot.status())).dot === 'error', 'Denied discovery should stop requesting login', 3000);
+    const stoppedAt = dotRequests;
+    await new Promise(r => setTimeout(r, 300));
+    assert.equal(dotRequests, stoppedAt, 'Denied discovery must wait for an explicit action');
+    assert.equal(await settings.getByRole('button', { name: '开始连接', exact: true }).isEnabled(), false);
+    assert.equal(JSON.parse(await readFile(join(data, 'state.json'), 'utf8')).enabled, false);
+  }
+  deniedStatus = 0;
+  await settings.evaluate(() => window.wechatDot.action('discover'));
+  await settings.getByRole('button', { name: '开始连接', exact: true }).click();
+  deniedStatus = 403;
+  await waitFor(async () => !(await settings.evaluate(() => window.wechatDot.status())).running, 'Denied polling should pause the bridge');
+  const stoppedAt = dotRequests;
+  await new Promise(r => setTimeout(r, 300));
+  assert.equal(dotRequests, stoppedAt, 'Paused access failure must not retry');
+  assert.equal(JSON.parse(await readFile(join(data, 'state.json'), 'utf8')).enabled, false);
+  assert.equal(await setupVisible(), true, 'An access failure should show its next action');
+  console.log('PASS: denied login and polling pause requests until the user explicitly retries.');
   console.log('PASS: real Electron UI, tray lifecycle, QR fixture, draft attachments, native text reply, dedup, restart and proactive message.' + (process.env.WECHAT_DOT_TEST_BROWSER === 'external' ? ' External-browser crash recovery also passed.' : '') + ' These are local fixtures, not live accounts.');
 } catch (e) {
   console.log('FIXTURE DRAFT', { draftAttachment, draftPolls, lastDraftPoll });

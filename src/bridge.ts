@@ -5,6 +5,7 @@ import type { AppStatus } from './types';
 import { StateStore } from './state';
 import { WeixinClient, WeixinExpiredError } from './weixin/client';
 import { DotClient } from './dot/client';
+import { DotAccessError } from './dot/errors';
 import { acceptDot, acceptWeixin, nextInbound, splitText } from './queue';
 
 export class Bridge {
@@ -48,7 +49,13 @@ export class Bridge {
       this.tasks = Promise.all([this.receive(controller.signal), this.pump(controller.signal)]).then(() => {});
     })();
     try { await this.starting; }
-    catch (e) { if (!controller.signal.aborted) { this.controller = undefined; throw e; } }
+    catch (e) {
+      if (!controller.signal.aborted) {
+        if (e instanceof DotAccessError) await this.stopForAccess(e);
+        this.controller = undefined;
+        throw e;
+      }
+    }
     finally { this.starting = undefined; }
   }
   async pause(): Promise<void> {
@@ -85,10 +92,17 @@ export class Bridge {
         this.status({ dot: 'ready', dotDetail: this.dot.profile?.name ?? 'dot 已连接', updatedAt: new Date().toISOString(), problem: undefined });
       } catch (e) {
         if (signal.aborted) break;
+        if (e instanceof DotAccessError) { await this.stopForAccess(e); break; }
         this.status({ problem: (e as Error).message, needsReview: nextInbound(this.store.data)?.phase === 'sending' });
       }
       await delay(this.config.dot.pollIntervalMs, undefined, { signal }).catch(() => {});
     }
+  }
+  private async stopForAccess(error: DotAccessError): Promise<void> {
+    this.controller?.abort();
+    await this.store.update(s => { s.enabled = false; });
+    this.status({ running: false, dot: 'error', dotDetail: error.message, problem: error.message,
+      needsReview: nextInbound(this.store.data)?.phase === 'sending' });
   }
   private async submit(): Promise<void> {
     const job = nextInbound(this.store.data);
