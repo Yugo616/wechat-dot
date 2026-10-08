@@ -21,12 +21,14 @@
 | 真实微信 + ChatGPT dot 收发 | 尚未通过；已退出实测程序，保留本机登录资料 |
 | 图片、文件、语音 | 尚未接入 |
 | macOS ARM 应用包 | alpha.3 本机打包和干净资料启动通过，含可加载的 Chrome 扩展 |
-| macOS Intel / ARM 云端构建和安装包启动 | alpha.3 待运行 |
-| Windows 构建、安装、启动 | alpha.3 待运行；alpha.2 曾完成 NSIS 安装后的程序启动 |
+| macOS Intel / ARM 云端构建和安装包启动 | alpha.3 通过，含 Chrome 扩展收发测试和打包文件检查 |
+| Windows 构建、安装、启动 | alpha.3 通过，含 Chrome 扩展收发测试、NSIS 安装后的程序启动和扩展文件检查 |
 | Windows 真实账号联调 | 未执行 |
 | 官方 MCP 插件入口 | 已确认需要公网服务或通道；未实现 MCP 收发 |
 
 本地接口测试会启动真正的桌面程序，通过输入框提交消息，再通过模拟的微信接口检查回传。它证明程序各层能够配合，不代表 ChatGPT 线上接口已经实测。
+
+alpha.3 对应源码 `ef640fb`，[三平台检查](https://github.com/Yugo616/wechat-dot/actions/runs/37763966651)全部通过。三个平台均覆盖连续文字、去重、主动消息、重启重连、401／403 暂停和空登录会话；扩展安装到真实 Chrome 需要用户手动完成。
 
 历史记录：[725d5ac 的三平台检查](https://github.com/Yugo616/wechat-dot/actions/runs/37754128146)通过，但[8cc13c5 的 macOS ARM 独立浏览器测试](https://github.com/Yugo616/wechat-dot/actions/runs/37757712235)仍出现后台发送超时。延长测试等待并未完全解决旧适配的不稳定；alpha.3 的默认入口和云端检查改用 Chrome 扩展。这些检查不包含真实账号登录。
 
