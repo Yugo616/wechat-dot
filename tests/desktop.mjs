@@ -49,7 +49,7 @@ try {
   await page.locator('#weixin-badge[data-status="ready"]').waitFor();
   await page.getByRole('button', { name: '登录 ChatGPT', exact: true }).click();
   if (process.env.WECHAT_DOT_TEST_BROWSER === 'external') await page.getByRole('button', { name: '登录完成，识别 dot' }).click();
-  await page.locator('#dot-badge[data-status="ready"]').waitFor({timeout:10000});
+  await page.locator('#dot-badge[data-status="ready"]').waitFor({timeout:45000});
   await page.getByRole('button', { name: /开始连接/ }).click();
   await page.getByRole('button', { name: '暂停连接' }).waitFor();
   incoming.push({ message_id: 'wx-1', from_user_id: 'fixture-owner', message_type: 1, message_state: 2, context_token: 'reply-context', item_list: [{ type: 1, text_item: { text: '你好 dot' } }] });

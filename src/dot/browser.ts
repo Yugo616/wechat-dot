@@ -1,6 +1,6 @@
 import { app, BrowserWindow } from 'electron';
 import { EventEmitter } from 'node:events';
-import { spawn, type ChildProcess } from 'node:child_process';
+import { spawn, execFile, type ChildProcess } from 'node:child_process';
 import { access, mkdir, readFile, rm } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
@@ -136,7 +136,10 @@ export class DotBrowser extends EventEmitter {
     if (this.child && this.child.exitCode === null && this.child.signalCode === null) {
       const child = this.child;
       const stopped = new Promise<void>(resolve => child.once('exit', () => resolve()));
-      child.kill('SIGTERM');
+      if (process.platform === 'win32' && child.pid) {
+        // Windows SIGTERM ends only the launcher; the browser processes still hold the profile.
+        await new Promise<void>(resolve => execFile('taskkill', ['/PID', String(child.pid), '/T'], { windowsHide: true }, () => resolve()));
+      } else child.kill('SIGTERM');
       await Promise.race([stopped, delay(this.config.requestTimeoutMs)]);
     }
     this.socket?.close(); this.socket = undefined; this.child = undefined;
