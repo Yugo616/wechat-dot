@@ -7,6 +7,7 @@ import { join } from 'node:path';
 import assert from 'node:assert/strict';
 const data = await mkdtemp(join(tmpdir(), 'wechat-dot-desktop-'));
 let draftAttachment = true;
+let draftPolls = 0, lastDraftPoll;
 let incoming = [], sent = [], nativeSends = [], messages = [{ id: 'old', account_user_id: 'dot-member', content: { text: '不应重发的历史' } }];
 const server = createServer(async (req, res) => {
   const url = new URL(req.url, 'http://localhost');
@@ -17,7 +18,7 @@ const server = createServer(async (req, res) => {
   if (url.pathname === '/ilink/bot/get_qrcode_status') return res.end(JSON.stringify({ status: 'confirmed', bot_token: 'fixture-weixin', ilink_bot_id: 'fixture-bot', ilink_user_id: 'fixture-owner', baseurl: base }));
   if (url.pathname === '/ilink/bot/getupdates') { const msgs = incoming.splice(0); return res.end(JSON.stringify({ ret: 0, msgs, get_updates_buf: 'cursor' })); }
   if (url.pathname === '/ilink/bot/sendmessage') { sent.push(JSON.parse(body).msg); return res.end('{"ret":0}'); }
-  if (url.pathname === '/fixture/draft') return res.end(JSON.stringify({attachment:draftAttachment}));
+  if (url.pathname === '/fixture/draft') { draftPolls++; lastDraftPoll = { at: new Date().toISOString(), attachment: draftAttachment }; return res.end(JSON.stringify({attachment:draftAttachment})); }
   if (url.pathname === '/api/auth/session') return res.end(JSON.stringify({ accessToken: 'fixture-chatgpt', user: { id: 'fixture-user' }, account: { id: 'fixture-account' } }));
   if (url.pathname === '/backend-api/tbo/primary') return res.end(JSON.stringify({ selection: { available: true, thread_id: 'thread' }, profile: { id: 'fixture-dot', display_name: '测试 dot', messaging_room_id: 'room' } }));
   if (url.pathname === '/backend-api/messaging/rooms/room') return res.end(JSON.stringify({ id: 'room', members: [{ aeon_id: 'fixture-dot', account_user_id: 'dot-member' }] }));
@@ -105,6 +106,7 @@ try {
   assert.equal(await setupVisible(), true, 'Pausing should keep the settings open');
   console.log('PASS: real Electron UI, tray lifecycle, QR fixture, draft attachments, native text reply, dedup, restart and proactive message.' + (process.env.WECHAT_DOT_TEST_BROWSER === 'external' ? ' External-browser crash recovery also passed.' : '') + ' These are local fixtures, not live accounts.');
 } catch (e) {
+  console.log('FIXTURE DRAFT', { draftAttachment, draftPolls, lastDraftPoll });
   if (desktop) {
     for (const p of desktop.windows()) console.log('FIXTURE WINDOW', p.url());
     console.log('FIXTURE STATUS', await (await desktop.firstWindow()).evaluate(() => window.wechatDot.status()).catch(() => 'App exited'));

@@ -116,6 +116,8 @@ export class DotBrowser extends EventEmitter {
     this.targetId = target.targetId;
     this.sessionId = (await this.command('Target.attachToTarget', { targetId: this.targetId, flatten: true }, true)).sessionId;
     await this.command('Network.enable'); await this.command('Page.enable');
+    // Keep the dedicated page active while its window is minimized.
+    await this.command('Emulation.setFocusEmulationEnabled', { enabled: true });
     this.emit('loaded');
     if (show) await this.show(); else await this.hide();
   }
