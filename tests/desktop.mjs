@@ -45,6 +45,13 @@ const base = `http://127.0.0.1:${server.address().port}`;
 await writeFile(join(data, 'config.json'), JSON.stringify({ weixin: { baseUrl: base, retryDelayMs: 30, longPollTimeoutMs: 500 }, dot: { browser: process.env.WECHAT_DOT_TEST_BROWSER ?? 'embedded', homeUrl: base + '/', pollIntervalMs: 50, sendTimeoutMs: 4000 } }));
 let desktop, browserPort;
 async function waitFor(test, label) { const end = Date.now() + 15000; while (!(await test())) { if (Date.now() > end) throw new Error(label); await new Promise(r => setTimeout(r, 50)); } }
+async function setupVisible() {
+  return desktop.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().find(w => w.webContents.getURL().endsWith('/index.html')).isVisible());
+}
+async function reopenSetup() {
+  await desktop.evaluate(({ app }) => { app.emit('second-instance', {}, [], process.cwd()); });
+  await waitFor(setupVisible, 'A second launch did not reopen connection settings');
+}
 try {
   desktop = await electron.launch({ args: ['.'], env: { ...process.env, WECHAT_DOT_DATA: data } });
   const page = await desktop.firstWindow();
@@ -56,8 +63,12 @@ try {
   if (process.env.WECHAT_DOT_TEST_BROWSER === 'external') browserPort = (await readFile(join(data, 'ChatGPT Browser', 'DevToolsActivePort'), 'utf8')).split('\n')[0];
   await page.getByRole('button', { name: /开始连接/ }).click();
   await page.getByRole('button', { name: '暂停连接' }).waitFor();
+  await waitFor(async () => !(await setupVisible()), 'Connected setup did not move to the tray');
+  await reopenSetup();
+  await desktop.evaluate(({ BrowserWindow }) => { BrowserWindow.getAllWindows().find(w => w.webContents.getURL().endsWith('/index.html')).close(); });
+  assert.equal(await setupVisible(), false, 'Closing settings should leave the bridge running');
   incoming.push({ message_id: 'wx-1', from_user_id: 'fixture-owner', message_type: 1, message_state: 2, context_token: 'reply-context', item_list: [{ type: 1, text_item: { text: '你好 dot' } }] });
-  await waitFor(async () => nativeSends.length > 0 || (await page.evaluate(() => window.wechatDot.status())).detail.includes('附件'), 'Composer was not inspected');
+  await waitFor(async () => nativeSends.length > 0 || (await page.evaluate(() => window.wechatDot.status())).problem?.includes('附件'), 'Composer was not inspected');
   assert.equal(nativeSends.length, 0, 'An attachment-only draft must not be submitted');
   draftAttachment = false;
   await waitFor(() => sent.length === 1, 'Native text loop did not deliver');
@@ -70,6 +81,7 @@ try {
   desktop = await electron.launch({ args: ['.'], env: { ...process.env, WECHAT_DOT_DATA: data } });
   const restarted = await desktop.firstWindow();
   await restarted.getByRole('button', { name: '暂停连接' }).waitFor();
+  assert.equal(await setupVisible(), false, 'Restoring a connection should not open settings');
   await new Promise(r => setTimeout(r, 500));
   assert.equal(sent.length, 1);
   messages.push({ id: 'proactive', account_user_id: 'dot-member', content: { text: '主动问候' } });
@@ -87,7 +99,11 @@ try {
     await waitFor(() => sent.length === 3, 'A surviving browser could not be reconnected after a crash');
     assert.equal(sent[2].item_list[0].text_item.text, '意外退出后继续');
   }
-  console.log('PASS: real Electron UI, QR fixture, draft attachments, native text reply, dedup, restart and proactive message.' + (process.env.WECHAT_DOT_TEST_BROWSER === 'external' ? ' External-browser crash recovery also passed.' : '') + ' These are local fixtures, not live accounts.');
+  await reopenSetup();
+  await (await desktop.firstWindow()).getByRole('button', { name: '暂停连接', exact: true }).click();
+  await (await desktop.firstWindow()).getByRole('button', { name: '开始连接', exact: true }).waitFor();
+  assert.equal(await setupVisible(), true, 'Pausing should keep the settings open');
+  console.log('PASS: real Electron UI, tray lifecycle, QR fixture, draft attachments, native text reply, dedup, restart and proactive message.' + (process.env.WECHAT_DOT_TEST_BROWSER === 'external' ? ' External-browser crash recovery also passed.' : '') + ' These are local fixtures, not live accounts.');
 } catch (e) {
   if (desktop) {
     for (const p of desktop.windows()) console.log('FIXTURE WINDOW', p.url());

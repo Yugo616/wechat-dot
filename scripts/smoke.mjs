@@ -8,8 +8,8 @@ let desktop;
 try {
   desktop = await electron.launch({ ...(process.env.WECHAT_DOT_EXECUTABLE ? { executablePath: process.env.WECHAT_DOT_EXECUTABLE, args: [] } : { args: ['.'] }), env: { ...process.env, WECHAT_DOT_DATA: data }, timeout: 60000 });
   const page = await desktop.firstWindow();
-  await page.getByRole('heading', { name: '把你的 dot，接到微信。' }).waitFor();
+  await page.getByRole('heading', { name: 'WeChat Dot', exact: true }).waitFor();
   assert.equal(await page.getByRole('button', { name: /开始连接/ }).isDisabled(), true);
-  await page.screenshot({ path: 'assets/screenshot.png' });
+  await page.screenshot({ path: 'assets/screenshot.png', scale: 'css' });
   console.log('PASS: desktop launches with a fresh profile; connect waits for both accounts.');
 } finally { if (desktop) await desktop.close(); await rm(data, { recursive: true, force: true }); }

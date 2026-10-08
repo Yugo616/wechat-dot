@@ -44,7 +44,7 @@ export class Bridge {
       if (controller.signal.aborted) return;
       await this.store.update(s => { s.enabled = true; });
       if (controller.signal.aborted) return;
-      this.status({ running: true, detail: '已连接。去微信里给 dot 发一句话吧。', needsReview: false });
+      this.status({ running: true, detail: '现在可以在微信里聊天了。', needsReview: false, problem: undefined });
       this.tasks = Promise.all([this.receive(controller.signal), this.pump(controller.signal)]).then(() => {});
     })();
     try { await this.starting; }
@@ -57,7 +57,7 @@ export class Bridge {
     await this.tasks;
     this.controller = undefined;
     await this.store.update(s => { s.enabled = false; });
-    this.status({ running: false, detail: '连接已暂停。' });
+    this.status({ running: false, detail: '连接已暂停。', problem: undefined });
   }
   private async receive(signal: AbortSignal): Promise<void> {
     while (!signal.aborted) {
@@ -82,10 +82,10 @@ export class Bridge {
         await acceptDot(this.store, messages, this.dot.members);
         await this.deliver(signal);
         if (!signal.aborted) await this.submit();
-        this.status({ dot: 'ready', dotDetail: 'dot 已连接', updatedAt: new Date().toISOString() });
+        this.status({ dot: 'ready', dotDetail: this.dot.profile?.name ?? 'dot 已连接', updatedAt: new Date().toISOString(), problem: undefined });
       } catch (e) {
         if (signal.aborted) break;
-        this.status({ detail: (e as Error).message, needsReview: nextInbound(this.store.data)?.phase === 'sending' });
+        this.status({ problem: (e as Error).message, needsReview: nextInbound(this.store.data)?.phase === 'sending' });
       }
       await delay(this.config.dot.pollIntervalMs, undefined, { signal }).catch(() => {});
     }

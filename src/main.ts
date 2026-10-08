@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, Menu, nativeImage, shell, Tray } from 'electron';
+import { app, BrowserWindow, ipcMain, Menu, nativeImage, screen, shell, Tray } from 'electron';
 import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import QRCode from 'qrcode';
@@ -23,23 +23,42 @@ async function run(): Promise<void> {
   const dot = new DotClient(config.dot);
   let quitting = false, qrController: AbortController | undefined, verifyCode = '', discoveryBusy = false;
   let status: AppStatus = { weixin: store.data.weixin ? 'ready' : 'idle', dot: 'idle', running: false,
-    weixinDetail: store.data.weixin ? '微信已登录' : '用手机微信扫码', dotDetail: '登录你自己的 ChatGPT', detail: '连接两个账号，就可以开始了。', version: app.getVersion() };
-  const window = new BrowserWindow({ width: 920, height: 690, minWidth: 750, minHeight: 640, title: 'WeChat Dot', backgroundColor: '#f6f7f3',
+    weixinDetail: store.data.weixin ? '微信已登录' : '用手机微信扫码', dotDetail: '在浏览器中登录 ChatGPT', detail: '先连接微信和 ChatGPT。', version: app.getVersion() };
+  const resumeInBackground = Boolean(store.data.enabled && store.data.weixin && store.data.dot);
+  const window = new BrowserWindow({ width: config.desktop.windowWidth, height: config.desktop.minContentHeight, useContentSize: true,
+    show: false, resizable: false, maximizable: false, fullscreenable: false, title: 'WeChat Dot', backgroundColor: '#f5f5f5',
     webPreferences: { preload: join(__dirname, 'preload.cjs'), contextIsolation: true, nodeIntegration: false, sandbox: true } });
   window.setMenuBarVisibility(false);
+  if (process.platform === 'darwin') void app.dock?.hide();
   const trayIcon = nativeImage.createFromPath(join(app.getAppPath(), 'assets', 'tray.png'));
   if (process.platform === 'darwin') trayIcon.setTemplateImage(true);
   const tray = new Tray(trayIcon); tray.setToolTip('WeChat Dot');
   const show = () => { window.show(); window.focus(); };
+  window.once('ready-to-show', () => { if (!resumeInBackground) show(); });
   function publish(patch: Partial<AppStatus>): void {
+    const wasRunning = status.running;
     status = { ...status, ...patch };
     if (!window.isDestroyed()) window.webContents.send('status', status);
+    const needsAttention = Boolean(status.problem || status.needsReview || status.weixin === 'error' || status.dot === 'error');
+    const title = needsAttention ? '需要处理' : status.running ? '已连接' : '未连接';
+    tray.setToolTip(`WeChat Dot · ${title}`);
     tray.setContextMenu(Menu.buildFromTemplate([
-      { label: status.running ? '正在连接' : '未连接', enabled: false },
-      { label: '打开 WeChat Dot', click: show },
-      { label: status.running ? '暂停连接' : '开始连接', click: () => { void action(status.running ? 'pause' : 'start'); } },
-      { type: 'separator' }, { label: '退出', click: () => app.quit() }
+      { label: title, enabled: false },
+      { label: '连接设置…', click: show },
+      { label: status.running ? '暂停连接' : '开始连接', enabled: status.running || (status.weixin === 'ready' && status.dot === 'ready'), click: () => { void action(status.running ? 'pause' : 'start'); } },
+      { type: 'separator' },
+      { label: '打开 dot', enabled: status.dot === 'ready', click: () => { void action('show-dot'); } },
+      { label: '重新登录', submenu: [
+        { label: '微信', click: () => { show(); void action('weixin'); } },
+        { label: 'ChatGPT', click: () => { show(); void action('dot'); } }
+      ] },
+      { label: status.updateUrl ? '下载新版本…' : '检查更新…', click: () => { void action('download'); } },
+      { type: 'separator' }, { label: '退出 WeChat Dot', click: () => app.quit() }
     ]));
+    if (status.running && !wasRunning) {
+      window.hide();
+      void dot.window?.hide().catch(() => {});
+    }
   }
   const bridge = new Bridge(store, weixin, dot, config, publish);
   window.on('close', e => { if (!quitting) { e.preventDefault(); window.hide(); } });
@@ -49,7 +68,7 @@ async function run(): Promise<void> {
     e.preventDefault(); quitting = true; qrController?.abort();
     void dot.dispose().finally(() => app.quit());
   });
-  dot.on('problem', e => publish({ detail: e.message }));
+  dot.on('problem', e => publish({ problem: e.message }));
 
   async function discover(): Promise<void> {
     if (discoveryBusy || !dot.window) return;
@@ -61,7 +80,7 @@ async function run(): Promise<void> {
         await bridge.pause();
       }
       await store.connectDot(profile);
-      publish({ dot: 'ready', dotName: profile.name, dotDetail: '已找到你的 dot', detail: '账号已准备好，点击开始连接。' });
+      publish({ dot: 'ready', dotName: profile.name, dotDetail: profile.name, detail: '准备好了，点击开始连接。', problem: undefined });
       if (store.data.enabled && store.data.weixin && !status.running) await bridge.start();
     } catch (e) { publish({ dot: 'waiting', dotDetail: (e as Error).message }); }
     finally { discoveryBusy = false; }
@@ -73,7 +92,7 @@ async function run(): Promise<void> {
   async function loginWeixin(): Promise<void> {
     await bridge.pause();
     qrController?.abort(); const controller = qrController = new AbortController();
-    publish({ weixin: 'waiting', qr: undefined, weixinDetail: '正在获取二维码…' });
+    publish({ weixin: 'waiting', qr: undefined, weixinDetail: '正在获取二维码…', problem: undefined });
     try {
       const qr = await weixin.request('/ilink/bot/get_bot_qrcode?bot_type=' + encodeURIComponent(config.weixin.botType), { local_token_list: [] }, { baseUrl: config.weixin.baseUrl, anonymous: true, signal: controller.signal });
       publish({ qr: await QRCode.toDataURL(qr.qrcode_img_content, { width: 230, margin: 1 }), weixinDetail: '用微信扫一扫，再在手机上确认' });
@@ -109,7 +128,7 @@ async function run(): Promise<void> {
       if (name === 'weixin') { void loginWeixin(); return; }
       if (name === 'verify') { verifyCode = value?.trim() ?? ''; return; }
       if (name === 'dot') {
-        await bridge.pause(); publish({ dot: 'waiting', dotDetail: '请在浏览器中完成 ChatGPT 登录' });
+        await bridge.pause(); publish({ dot: 'waiting', dotDetail: '请在浏览器中完成 ChatGPT 登录', problem: undefined });
         const manual = await dot.login();
         publish({ finishLogin: manual, dotDetail: manual ? '登录后，点击下方「登录完成」' : '请在 ChatGPT 窗口完成登录' });
         if (!manual) await discover();
@@ -117,17 +136,26 @@ async function run(): Promise<void> {
       if (name === 'finish-login') { await dot.finishLogin(); publish({ finishLogin: false }); await discover(); }
       if (name === 'show-dot') await dot.showConversation();
       if (name === 'discover') await discover();
-      if (name === 'start') await bridge.start();
+      if (name === 'start') { publish({ problem: undefined }); await bridge.start(); }
       if (name === 'pause') await bridge.pause();
       if (name === 'received' || name === 'retry') await bridge.resolveUncertain(name === 'retry');
       if (name === 'download') await shell.openExternal(config.updates.releaseUrl);
       if (name === 'quit') app.quit();
-    } catch (e) { publish({ detail: (e as Error).message }); }
+    } catch (e) { publish({ problem: (e as Error).message }); show(); }
   }
   ipcMain.handle('status', () => status);
   ipcMain.handle('action', (event, name, value) => {
     if (event.sender !== window.webContents) return;
     return action(name, value);
+  });
+  ipcMain.on('resize', (event, height) => {
+    if (event.sender !== window.webContents || !Number.isFinite(height)) return;
+    const display = screen.getDisplayMatching(window.getBounds());
+    const frameHeight = window.getBounds().height - window.getContentBounds().height;
+    const maxHeight = Math.min(config.desktop.maxContentHeight, display.workArea.height - frameHeight);
+    window.setContentSize(config.desktop.windowWidth, Math.max(config.desktop.minContentHeight, Math.min(Math.ceil(height), maxHeight)));
+    const bounds = window.getBounds();
+    if (bounds.y + bounds.height > display.workArea.y + display.workArea.height) window.setPosition(bounds.x, Math.max(display.workArea.y, display.workArea.y + display.workArea.height - bounds.height));
   });
   await window.loadFile(join(__dirname, 'index.html'));
   publish({});
@@ -136,5 +164,9 @@ async function run(): Promise<void> {
       const newer = Array.isArray(releases) && releases.find(r => !r.draft && valid(r.tag_name) && gt(r.tag_name, app.getVersion()));
       if (newer) publish({ updateUrl: config.updates.releaseUrl });
     }).catch(() => {});
-  if (store.data.dot) { publish({ dot: 'waiting', dotDetail: '正在恢复 ChatGPT 登录…' }); await dot.open(false); }
+  if (store.data.dot) {
+    publish({ dot: 'waiting', dotDetail: '正在恢复 ChatGPT 登录…' });
+    try { await dot.open(false); }
+    catch (e) { publish({ dot: 'error', dotDetail: (e as Error).message }); show(); }
+  }
 }

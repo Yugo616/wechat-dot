@@ -1,6 +1,6 @@
 {
   "name": "wechat-dot",
-  "version": "0.1.0-alpha.1",
+  "version": "0.1.0-alpha.2",
   "description": "在微信里和你的 dot 聊天。",
   "private": true,
   "license": "MIT",

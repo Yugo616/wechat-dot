@@ -117,7 +117,7 @@ export class DotBrowser extends EventEmitter {
     this.sessionId = (await this.command('Target.attachToTarget', { targetId: this.targetId, flatten: true }, true)).sessionId;
     await this.command('Network.enable'); await this.command('Page.enable');
     this.emit('loaded');
-    if (show) await this.show();
+    if (show) await this.show(); else await this.hide();
   }
   command(method: string, params: object = {}, root = false): Promise<any> {
     if (this.embedded) return this.embedded.webContents.debugger.sendCommand(method, params);
@@ -152,6 +152,11 @@ export class DotBrowser extends EventEmitter {
     const { windowId } = await this.command('Browser.getWindowForTarget', { targetId: this.targetId }, true);
     await this.command('Browser.setWindowBounds', { windowId, bounds: { windowState: 'normal' } }, true);
     await this.command('Page.bringToFront');
+  }
+  async hide(): Promise<void> {
+    if (this.embedded) { this.embedded.hide(); return; }
+    const { windowId } = await this.command('Browser.getWindowForTarget', { targetId: this.targetId }, true);
+    await this.command('Browser.setWindowBounds', { windowId, bounds: { windowState: 'minimized' } }, true);
   }
   async dispose(): Promise<void> {
     this.embedded?.destroy(); this.embedded = undefined;

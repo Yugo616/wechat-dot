@@ -34,4 +34,5 @@ export interface AppStatus {
   version: string; updatedAt?: string; updateUrl?: string;
   needsReview?: boolean;
   finishLogin?: boolean;
+  problem?: string;
 }
