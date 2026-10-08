@@ -8,9 +8,11 @@ import assert from 'node:assert/strict';
 const data = await mkdtemp(join(tmpdir(), 'wechat-dot-desktop-'));
 let draftAttachment = true;
 let draftPolls = 0, lastDraftPoll;
+const requests = [];
 let incoming = [], sent = [], nativeSends = [], messages = [{ id: 'old', account_user_id: 'dot-member', content: { text: '不应重发的历史' } }];
 const server = createServer(async (req, res) => {
   const url = new URL(req.url, 'http://localhost');
+  if (url.pathname !== '/fixture/draft' && !url.pathname.endsWith('getupdates')) { requests.push({ at: new Date().toISOString(), method: req.method, path: url.pathname }); if (requests.length > 30) requests.shift(); }
   const parts = []; for await (const b of req) parts.push(b);
   const body = Buffer.concat(parts).toString();
   res.setHeader('Content-Type', 'application/json');
@@ -45,7 +47,7 @@ await once(server, 'listening');
 const base = `http://127.0.0.1:${server.address().port}`;
 await writeFile(join(data, 'config.json'), JSON.stringify({ weixin: { baseUrl: base, retryDelayMs: 30, longPollTimeoutMs: 500 }, dot: { browser: process.env.WECHAT_DOT_TEST_BROWSER ?? 'embedded', homeUrl: base + '/', pollIntervalMs: 50, sendTimeoutMs: 4000 } }));
 let desktop, browserPort;
-async function waitFor(test, label) { const end = Date.now() + 15000; while (!(await test())) { if (Date.now() > end) throw new Error(label); await new Promise(r => setTimeout(r, 50)); } }
+async function waitFor(test, label, timeout = 15000) { const end = Date.now() + timeout; while (!(await test())) { if (Date.now() > end) throw new Error(label); await new Promise(r => setTimeout(r, 50)); } }
 async function setupVisible() {
   return desktop.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().find(w => w.webContents.getURL().endsWith('/index.html')).isVisible());
 }
@@ -71,8 +73,10 @@ try {
   incoming.push({ message_id: 'wx-1', from_user_id: 'fixture-owner', message_type: 1, message_state: 2, context_token: 'reply-context', item_list: [{ type: 1, text_item: { text: '你好 dot' } }] });
   await waitFor(async () => nativeSends.length > 0 || (await page.evaluate(() => window.wechatDot.status())).problem?.includes('附件'), 'Composer was not inspected');
   assert.equal(nativeSends.length, 0, 'An attachment-only draft must not be submitted');
+  const deliveryStarted = Date.now();
   draftAttachment = false;
-  await waitFor(() => sent.length === 1, 'Native text loop did not deliver');
+  await waitFor(() => sent.length === 1, 'Native text loop did not deliver', 60000);
+  console.log('FIXTURE DELIVERY MS', Date.now() - deliveryStarted);
   assert.equal(sent[0].item_list[0].text_item.text, '收到：你好 dot');
   assert.equal(nativeSends.length, 1);
   incoming.push({ message_id: 'wx-1', from_user_id: 'fixture-owner', message_type: 1, message_state: 2, context_token: 'reply-context', item_list: [{ type: 1, text_item: { text: '你好 dot' } }] });
@@ -107,6 +111,16 @@ try {
   console.log('PASS: real Electron UI, tray lifecycle, QR fixture, draft attachments, native text reply, dedup, restart and proactive message.' + (process.env.WECHAT_DOT_TEST_BROWSER === 'external' ? ' External-browser crash recovery also passed.' : '') + ' These are local fixtures, not live accounts.');
 } catch (e) {
   console.log('FIXTURE DRAFT', { draftAttachment, draftPolls, lastDraftPoll });
+  console.log('FIXTURE REQUESTS', requests);
+  if (browserPort) {
+    const browser = await chromium.connectOverCDP(`http://127.0.0.1:${browserPort}`, { noDefaults: true, timeout: 2000 }).catch(() => undefined);
+    if (browser) {
+      for (const page of browser.contexts()[0].pages()) {
+        console.log('FIXTURE BROWSER', page.url(), await page.evaluate(() => ({ visibility: document.visibilityState, draft: Boolean(document.getElementById('attachment')), text: document.querySelector('textarea')?.value })).catch(() => 'unavailable'));
+      }
+      await browser.close();
+    }
+  }
   if (desktop) {
     for (const p of desktop.windows()) console.log('FIXTURE WINDOW', p.url());
     console.log('FIXTURE STATUS', await (await desktop.firstWindow()).evaluate(() => window.wechatDot.status()).catch(() => 'App exited'));
