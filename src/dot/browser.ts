@@ -1,7 +1,7 @@
 import { app, BrowserWindow } from 'electron';
 import { EventEmitter } from 'node:events';
 import { spawn, execFile, type ChildProcess } from 'node:child_process';
-import { access, mkdir, readFile, rm } from 'node:fs/promises';
+import { access, mkdir, readFile, readlink, rm } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
@@ -18,11 +18,25 @@ export class DotBrowser extends EventEmitter {
   private sequence = 0;
   private pending = new Map<number, { resolve: (v: any) => void; reject: (e: Error) => void; timer: ReturnType<typeof setTimeout> }>();
   constructor(readonly config: Config['dot']) { super(); }
+  private get directory(): string { return join(app.getPath('userData'), 'ChatGPT Browser'); }
+  private async stopManualBrowser(): Promise<void> {
+    if (process.platform === 'win32') {
+      const script = `$browsers = Get-CimInstance Win32_Process -Filter "Name='chrome.exe' OR Name='msedge.exe'" | Where-Object { $_.CommandLine -and $_.CommandLine.Contains('--user-data-dir=' + $env:WECHAT_DOT_BROWSER_PROFILE) -and !$_.CommandLine.Contains('--type=') }; foreach ($browser in $browsers) { $p = Get-Process -Id $browser.ProcessId -ErrorAction SilentlyContinue; if ($p) { $closed = $p.CloseMainWindow(); if ($closed) { [void]$p.WaitForExit(2000) }; if (!$p.HasExited) { & taskkill /PID $browser.ProcessId /T /F | Out-Null } } }`;
+      await new Promise<void>((resolve, reject) => execFile('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', script], { windowsHide: true, env: { ...process.env, WECHAT_DOT_BROWSER_PROFILE: this.directory } }, error => error ? reject(new Error('请关闭 WeChat Dot 的专用浏览器窗口，再点登录完成。')) : resolve()));
+      return;
+    }
+    try {
+      const lock = await readlink(join(this.directory, 'SingletonLock'));
+      const pid = Number(lock.slice(lock.lastIndexOf('-') + 1));
+      const command = await new Promise<string>((resolve, reject) => execFile('ps', ['-p', String(pid), '-o', 'args='], (error, stdout) => error ? reject(error) : resolve(stdout)));
+      if (command.includes(`--user-data-dir=${this.directory}`)) process.kill(pid, 'SIGTERM');
+    } catch { if (this.child?.exitCode === null && this.child.signalCode === null) this.child.kill('SIGTERM'); }
+  }
   async login(): Promise<void> {
     const executable = await this.executable();
     if (!executable) { await this.open(true); return; }
     this.manualLogin = true;
-    const directory = join(app.getPath('userData'), 'ChatGPT Browser');
+    const directory = this.directory;
     await mkdir(directory, { recursive: true, mode: 0o700 });
     this.child = spawn(executable, [`--user-data-dir=${directory}`, '--no-first-run', '--no-default-browser-check', '--new-window', this.config.homeUrl], { stdio: 'ignore' });
     this.child.on('error', e => this.emit('problem', new Error(`浏览器启动失败：${e.message}`)));
@@ -53,15 +67,24 @@ export class DotBrowser extends EventEmitter {
       await this.embedded.loadURL(this.config.homeUrl);
       return;
     }
-    const directory = join(app.getPath('userData'), 'ChatGPT Browser');
+    const directory = this.directory;
     await mkdir(directory, { recursive: true, mode: 0o700 });
     const portFile = join(directory, 'DevToolsActivePort');
-    await rm(portFile, { force: true });
-    const child = this.child = spawn(executable, [`--user-data-dir=${directory}`, '--remote-debugging-port=0', '--remote-debugging-address=127.0.0.1', '--no-first-run', '--no-default-browser-check', `--app=${this.config.homeUrl}`], { stdio: 'ignore' });
     let failed: Error | undefined;
-    child.on('error', e => { failed = e; });
-    const end = Date.now() + this.config.requestTimeoutMs;
     let port: string | undefined, endpoint: string | undefined;
+    try {
+      const [savedPort, savedEndpoint] = (await readFile(portFile, 'utf8')).trim().split('\n');
+      const response = await fetch(`http://127.0.0.1:${savedPort}/json/version`, { signal: AbortSignal.timeout(this.config.browserProbeTimeoutMs) });
+      const version = await response.json();
+      if (version.webSocketDebuggerUrl?.endsWith(savedEndpoint)) { port = savedPort; endpoint = savedEndpoint; }
+    } catch {}
+    if (!port) {
+      await this.stopManualBrowser();
+      await rm(portFile, { force: true });
+      const child = this.child = spawn(executable, [`--user-data-dir=${directory}`, '--remote-debugging-port=0', '--remote-debugging-address=127.0.0.1', '--no-first-run', '--no-default-browser-check', `--app=${this.config.homeUrl}`], { stdio: 'ignore' });
+      child.on('error', e => { failed = e; });
+    }
+    const end = Date.now() + this.config.requestTimeoutMs;
     while (!port) {
       if (failed) throw new Error(`浏览器启动失败：${failed.message}`);
       if (Date.now() > end) throw new Error('浏览器启动超时，请关闭 WeChat Dot 的登录窗口后重试。');
@@ -133,6 +156,7 @@ export class DotBrowser extends EventEmitter {
   async dispose(): Promise<void> {
     this.embedded?.destroy(); this.embedded = undefined;
     if (this.socket?.readyState === WebSocket.OPEN) await this.command('Browser.close', {}, true).catch(() => {});
+    if (this.manualLogin) await this.stopManualBrowser();
     if (this.child && this.child.exitCode === null && this.child.signalCode === null) {
       const child = this.child;
       const stopped = new Promise<void>(resolve => child.once('exit', () => resolve()));

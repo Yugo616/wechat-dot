@@ -21,9 +21,11 @@ export interface InboundJob { id: string; message: WeixinMessage; phase: 'pendin
 export interface OutboundJob { id: string; message: DotMessage; part: number; phase: 'pending' | 'sending' | 'done' }
 export interface BridgeState {
   version: 1; weixin?: WeixinAccount; dot?: DotProfile;
-  weixinCursor: string; weixinPrimed?: boolean; dotCursor?: string; contextToken?: string;
+  weixinCursor: string; weixinPrimed?: boolean; dotCursor?: string; dotPending?: string[]; contextToken?: string;
   inbound: InboundJob[]; outbound: OutboundJob[]; enabled: boolean;
+  savedConnections?: Record<string, ConnectionProgress>;
 }
+export type ConnectionProgress = Pick<BridgeState, 'weixinCursor' | 'weixinPrimed' | 'dotCursor' | 'dotPending' | 'contextToken' | 'inbound' | 'outbound'>;
 export type ConnectionStatus = 'idle' | 'waiting' | 'ready' | 'error';
 export interface AppStatus {
   weixin: ConnectionStatus; dot: ConnectionStatus; running: boolean;

@@ -57,11 +57,10 @@ async function run(): Promise<void> {
     try {
       const profile = await dot.discover();
       const previous = store.data.dot;
-      if (previous && (previous.roomId !== profile.roomId || previous.userId !== profile.userId)) {
+      if (previous && (previous.roomId !== profile.roomId || previous.userId !== profile.userId || previous.accountId !== profile.accountId)) {
         await bridge.pause();
-        await store.update(s => { s.dotCursor = undefined; s.inbound = []; s.outbound = []; });
       }
-      await store.update(s => { s.dot = profile; });
+      await store.connectDot(profile);
       publish({ dot: 'ready', dotName: profile.name, dotDetail: '已找到你的 dot', detail: '账号已准备好，点击开始连接。' });
       if (store.data.enabled && store.data.weixin && !status.running) await bridge.start();
     } catch (e) { publish({ dot: 'waiting', dotDetail: (e as Error).message }); }
@@ -88,13 +87,7 @@ async function run(): Promise<void> {
         if (value.status === 'confirmed') {
           if (!value.bot_token || !value.ilink_user_id || !value.ilink_bot_id) throw new Error('微信没有返回完整登录信息，请重新扫码。');
           const account = { token: value.bot_token, userId: value.ilink_user_id, botId: value.ilink_bot_id, baseUrl: value.baseurl || baseUrl };
-          await store.update(s => {
-            if (s.weixin?.userId !== account.userId || s.weixin?.botId !== account.botId) {
-              s.weixinCursor = ''; s.weixinPrimed = false; s.contextToken = undefined;
-              s.dotCursor = undefined; s.inbound = []; s.outbound = [];
-            }
-            s.weixin = account;
-          });
+          await store.connectWeixin(account);
           weixin.account = account;
           publish({ qr: undefined, verifyRequired: false, weixinDetail: '正在同步微信…' });
           await bridge.primeWeixin(controller.signal);

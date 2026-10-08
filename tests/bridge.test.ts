@@ -33,6 +33,21 @@ test('unfinished dot response holds the cursor and is queued only after completi
   assert.deepEqual(store.data.outbound.map(j => j.id), ['d1', 'd2']);
   assert.equal(store.data.dotCursor, 'd2');
 });
+test('a reply already generating at first connection completes without replaying older history', async t => {
+  const store = await setup(t);
+  await store.update(s => { s.dotCursor = 'latest-old'; s.dotPending = ['generating']; });
+  const raw = (id: string, status: string) => ({ id, account_user_id: 'dot', content: { text: id }, generation: { status } });
+  const members = new Set(['dot']);
+  await acceptDot(store, [raw('generating', 'in_progress'), raw('new', 'completed')], members);
+  assert.equal(store.data.dotCursor, 'latest-old');
+  const restarted = new StateStore(store.directory); await restarted.load();
+  await acceptDot(restarted, [raw('generating', 'completed')], members);
+  assert.equal(restarted.data.dotCursor, 'latest-old', 'Finishing a baseline reply must not rewind the history cursor');
+  assert.deepEqual(restarted.data.dotPending, []);
+  await acceptDot(restarted, [raw('new', 'completed')], members);
+  assert.deepEqual(restarted.data.outbound.map(j => j.id), ['generating', 'new']);
+  assert.equal(restarted.data.dotCursor, 'new');
+});
 test('an interrupted native send is reconciled before another message is submitted', async t => {
   const store = await setup(t);
   await store.update(s => { s.inbound = [{ id: 'one', phase: 'sending', message: {} }, { id: 'two', phase: 'pending', message: {} }]; });

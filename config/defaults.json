@@ -12,6 +12,7 @@
   },
   "dot": {
     "browser": "auto",
+    "browserProbeTimeoutMs": 1000,
     "browserExecutables": {
       "darwin": ["/Applications/Google Chrome.app/Contents/MacOS/Google Chrome", "/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge", "{home}/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"],
       "win32": ["{programFiles}/Google/Chrome/Application/chrome.exe", "{programFilesX86}/Microsoft/Edge/Application/msedge.exe", "{localAppData}/Google/Chrome/Application/chrome.exe"],
@@ -32,6 +33,7 @@
     "sendTimeoutMs": 60000,
     "historyPageSize": 50,
     "composerSelectors": ["#prompt-textarea", "[contenteditable='true'][role='textbox']", "textarea"],
+    "draftAttachmentSelectors": ["input[type='file']", "[data-testid*='attachment']", "img[src^='blob:']", "button[aria-label*='Remove']", "button[aria-label*='移除']", "button[aria-label*='删除']", "button[aria-label*='取消上传']"],
     "sendSelectors": ["[data-testid='send-button']", "button[aria-label='Send message']", "button[aria-label='发送消息']", "button[aria-label='Send']", "button[aria-label='发送']"]
   },
   "storage": { "maxMediaBytes": 26214400, "mediaRetentionHours": 24, "completedHistoryLimit": 2000 },

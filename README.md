@@ -1,5 +1,3 @@
-# wechat-dot
-
 在微信里和你的 dot 聊天。
 
 [下载安装包](https://github.com/Yugo616/wechat-dot/releases)

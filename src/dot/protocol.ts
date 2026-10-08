@@ -1,5 +1,9 @@
 import type { DotAttachment, DotMessage } from '../types';
 
+export function messageBaseline(items: any[], members: Set<string>): { cursor: string; pending: string[] } {
+  return { cursor: items.at(-1)?.id ?? '', pending: items.filter(raw => normalizeDotMessage(raw, members)?.complete === false).map(raw => raw.id) };
+}
+
 export function normalizeDotMessage(raw: any, dotMembers: Set<string>): DotMessage | null {
   if (!raw?.id || raw.deleted_at || raw.deletedAt) return null;
   const projected = Array.isArray(raw.raw_messages);

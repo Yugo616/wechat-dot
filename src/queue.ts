@@ -24,7 +24,8 @@ export async function acceptDot(store: StateStore, messages: any[], members: Set
         s.outbound.push({ id: message.id, message, phase: 'pending', part: 0 });
         known.add(message.id);
       }
-      if (raw.id) s.dotCursor = raw.id;
+      if (s.dotPending?.includes(raw.id)) s.dotPending = s.dotPending.filter(id => id !== raw.id);
+      else if (raw.id) s.dotCursor = raw.id;
     }
   });
 }

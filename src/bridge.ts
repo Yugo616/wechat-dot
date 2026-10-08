@@ -38,8 +38,8 @@ export class Bridge {
       this.status({ detail: '正在同步收取位置…' });
       await this.primeWeixin(controller.signal);
       if (this.store.data.dotCursor === undefined) {
-        const latest = await this.dot.latest();
-        await this.store.update(s => { s.dotCursor = latest; });
+        const baseline = await this.dot.baseline();
+        await this.store.update(s => { s.dotCursor = baseline.cursor; s.dotPending = baseline.pending; });
       }
       if (controller.signal.aborted) return;
       await this.store.update(s => { s.enabled = true; });
@@ -77,7 +77,7 @@ export class Bridge {
   private async pump(signal: AbortSignal): Promise<void> {
     while (!signal.aborted) {
       try {
-        const messages = await this.dot.messages(this.store.data.dotCursor ?? '');
+        const messages = await this.dot.messages(this.store.data.dotCursor ?? '', this.store.data.dotPending);
         if (signal.aborted) break;
         await acceptDot(this.store, messages, this.dot.members);
         await this.deliver(signal);
@@ -103,9 +103,10 @@ export class Bridge {
     }
     const text = (job.message.item_list ?? []).map(i => i.text_item?.text ?? i.voice_item?.text ?? '').filter(Boolean).join('\n');
     if (!text) throw new Error('这条消息含有附件，请等媒体功能接入后重试。');
-    await this.store.update(s => { const j = s.inbound.find(j => j.id === job.id)!; j.phase = 'sending'; j.text = text; j.beforeCursor = s.dotCursor; });
     const id = await this.dot.send(text, [], async requestId => {
       await this.store.update(s => { s.inbound.find(j => j.id === job.id)!.requestId = requestId; });
+    }, async () => {
+      await this.store.update(s => { const j = s.inbound.find(j => j.id === job.id)!; j.phase = 'sending'; j.text = text; j.beforeCursor = s.dotCursor; });
     });
     await this.store.update(s => { const j = s.inbound.find(j => j.id === job.id)!; j.phase = 'done'; j.dotMessageId = id; });
     this.status({ detail: '消息已送到 dot，等它回复。', needsReview: false });

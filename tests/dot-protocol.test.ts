@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { normalizeDotMessage, collectNewMessages } from '../src/dot/protocol';
+import { normalizeDotMessage, collectNewMessages, messageBaseline } from '../src/dot/protocol';
 
 test('dot participant messages are recognized even when the room uses a user-shaped envelope', () => {
   const result = normalizeDotMessage({ id: 'd1', account_user_id: 'agent-member', created_at: '2026-10-08T01:00:00Z', content: { text: '完成了', attachments: [{ type: 'file', file_id: 'f1', file: { name: '报告.pdf', mime_type: 'application/pdf' } }] } }, new Set(['agent-member']));
@@ -32,4 +32,12 @@ test('an initially empty room does not drop an entire page of new messages', asy
     return { items: [{ id: '1' }, { id: '2' }], prev_cursor: null };
   });
   assert.deepEqual(result.map(m => m.id), ['1', '2', '3', '4']);
+});
+test('first connection retains unfinished replies and skips completed history', () => {
+  const items = [
+    { id: 'older', account_user_id: 'dot', content: { text: 'old' } },
+    { id: 'unfinished', account_user_id: 'dot', generation: { status: 'in_progress' } },
+    { id: 'latest', account_user_id: 'dot', content: { text: 'also old' } }
+  ];
+  assert.deepEqual(messageBaseline(items, new Set(['dot'])), { cursor: 'latest', pending: ['unfinished'] });
 });

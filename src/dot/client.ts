@@ -2,7 +2,7 @@ import { DotBrowser } from './browser';
 import { EventEmitter } from 'node:events';
 import type { Config } from '../config';
 import type { DotProfile, LocalFile } from '../types';
-import { collectNewMessages } from './protocol';
+import { collectNewMessages, messageBaseline } from './protocol';
 
 export class DotClient extends EventEmitter {
   window?: DotBrowser;
@@ -97,7 +97,7 @@ export class DotClient extends EventEmitter {
     const found: DotProfile = { id: profile.id ?? selection.aeon_id, name: profile.display_name || '我的 dot', roomId,
       accountId: this.headers['chatgpt-account-id'] ?? login.account?.id ?? '', userId: login.user?.id ?? '',
       url: new URL(this.config.conversationPath.replace('{threadId}', encodeURIComponent(selection.thread_id)), this.config.homeUrl).href };
-    if (this.profile && (this.profile.roomId !== found.roomId || this.profile.userId !== found.userId)) throw new Error('ChatGPT 账号或 dot 已切换，请暂停连接后重新登录。');
+    if (this.profile && (this.profile.roomId !== found.roomId || this.profile.userId !== found.userId || this.profile.accountId !== found.accountId)) throw new Error('ChatGPT 账号或 dot 已切换，请暂停连接后重新登录。');
     this.profile = found;
     const room = await this.api(this.path(this.config.roomPath));
     this.members = new Set((room.members ?? []).filter((m: any) => m.aeon_id === found.id).map((m: any) => m.account_user_id));
@@ -107,21 +107,28 @@ export class DotClient extends EventEmitter {
     await this.open();
     if (this.profile && await this.window!.url() !== this.profile.url) await this.window!.navigate(this.profile.url);
   }
-  async latest(): Promise<string> {
-    const page = await this.api(`${this.path(this.config.messagesPath)}?limit=1`);
+  async baseline(): Promise<{ cursor: string; pending: string[] }> {
+    const page = await this.api(`${this.path(this.config.messagesPath)}?limit=${this.config.historyPageSize}`);
     if (!Array.isArray(page.items)) throw new Error('dot 消息接口已变化，请检查更新。');
-    return page.items.at(-1)?.id ?? '';
+    return messageBaseline(page.items, this.members);
   }
-  async messages(after: string): Promise<any[]> {
-    return collectNewMessages(after, this.config.historyPageSize, (cursor, limit, before) => this.api(`${this.path(this.config.messagesPath)}?${new URLSearchParams({ ...(cursor ? { after: cursor } : {}), ...(before ? { before } : {}), limit: String(limit) })}`));
+  async messages(after: string, pending: string[] = []): Promise<any[]> {
+    const unfinished = await Promise.all(pending.map(async id => {
+      const page = await this.api(`${this.path(this.config.messagesPath)}?${new URLSearchParams({ around: id, limit: String(this.config.historyPageSize) })}`);
+      if (!Array.isArray(page.items)) throw new Error('dot 消息接口已变化，请检查更新。');
+      return page.items.filter((m: any) => m.id === id);
+    }));
+    const newer = await collectNewMessages(after, this.config.historyPageSize, (cursor, limit, before) => this.api(`${this.path(this.config.messagesPath)}?${new URLSearchParams({ ...(cursor ? { after: cursor } : {}), ...(before ? { before } : {}), limit: String(limit) })}`));
+    return [...unfinished.flat(), ...newer];
   }
   async findRequest(requestId: string, after: string): Promise<string | undefined> {
     return (await this.messages(after)).find(m => m.request_id === requestId)?.id;
   }
-  async send(text: string, files: LocalFile[], onRequest: (id: string) => Promise<void>): Promise<string> {
+  async send(text: string, files: LocalFile[], onRequest: (id: string) => Promise<void>, beforeSubmit: () => Promise<void>): Promise<string> {
     if (files.length) throw new Error('附件功能正在接入，请先用文字测试连接。');
     if (!this.profile || !this.window) throw new Error('请先连接 dot。');
     if (this.pending) throw new Error('上一条消息仍在发送。');
+    await this.discover();
     const page = this.window;
     if (await page.url() !== this.profile.url) await this.window.navigate(this.profile.url);
     const selectors = JSON.stringify(this.config.composerSelectors);
@@ -129,9 +136,17 @@ export class DotClient extends EventEmitter {
       const e = ${selectors}.map(s=>document.querySelector(s)).find(e=>e && e.getBoundingClientRect().height>0);
       if(!e) return 'missing';
       if((e.value ?? e.innerText ?? '').trim()) return 'draft';
+      const form = e.closest('form') ?? e.parentElement;
+      for(const selector of ${JSON.stringify(this.config.draftAttachmentSelectors)}) {
+        for(const item of form?.querySelectorAll(selector) ?? []) {
+          if(item instanceof HTMLInputElement ? item.files?.length : item.getBoundingClientRect().height > 0) return 'attachment';
+        }
+      }
       e.focus(); return 'ready';
     })()`);
+    if (ready === 'attachment') throw new Error('ChatGPT 输入框里有附件或正在上传的文件，请先处理完再继续。');
     if (ready !== 'ready') throw new Error(ready === 'draft' ? 'ChatGPT 输入框里有未发送内容，请先发送或清空，再继续连接。' : '找不到 dot 输入框，请打开 ChatGPT，等页面加载完成后重试。');
+    await beforeSubmit();
     await page.insertText(text);
     let timer: ReturnType<typeof setTimeout> | undefined;
     try {
