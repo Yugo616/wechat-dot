@@ -56,12 +56,16 @@ jobs:
           $env:WECHAT_DOT_EXECUTABLE = $app
           npm run smoke
           if ($LASTEXITCODE -ne 0) { throw 'Installed app did not launch' }
+          $env:WECHAT_DOT_TEST_BROWSER = 'default'
+          node tests/desktop.mjs
+          if ($LASTEXITCODE -ne 0) { throw 'Installed app media test failed' }
       - name: Check macOS packaged application
         if: runner.os == 'macOS'
         shell: bash
         run: |
           APP=$(find release -maxdepth 2 -name 'WeChat Dot.app' -print -quit)
           WECHAT_DOT_EXECUTABLE="$APP/Contents/MacOS/WeChat Dot" npm run smoke
+          WECHAT_DOT_EXECUTABLE="$APP/Contents/MacOS/WeChat Dot" WECHAT_DOT_TEST_BROWSER=default node tests/desktop.mjs
       - uses: actions/upload-artifact@v4
         with:
           name: wechat-dot-${{ matrix.platform }}-${{ matrix.arch }}

@@ -1,7 +1,10 @@
 import { DotBrowser } from './browser';
 import { EventEmitter } from 'node:events';
+import { readFile } from 'node:fs/promises';
+import { setTimeout as delay } from 'node:timers/promises';
 import type { Config } from '../config';
-import type { DotProfile, LocalFile } from '../types';
+import type { DotAttachment, DotProfile, LocalFile } from '../types';
+import type { MediaStore } from '../media';
 import { collectNewMessages, messageBaseline } from './protocol';
 import { DotAccessError } from './errors';
 import { ExtensionBrowser } from './extension-browser';
@@ -14,7 +17,8 @@ export class DotClient extends EventEmitter {
   private headers: Record<string, string> = {};
   private prefix: string;
   private posts = new Map<string, { requestId: string; text: string }>();
-  private pending?: { text: string; resolve: (id: string) => void; reject: (e: Error) => void; onRequest: (id: string) => Promise<void> };
+  private pending?: { text: string; fileIds: string[]; resolve: (id: string) => void; reject: (e: Error) => void; onRequest: (id: string) => Promise<void> };
+  private uploading?: { requests: Set<string>; ids: string[]; expected: number; resolve: (ids: string[]) => void; reject: (error: Error) => void };
   constructor(readonly config: Config['dot']) { super(); this.prefix = config.apiPrefixes[0]; }
   private createBrowser(): DotBrowser { return this.config.browser === 'extension' ? new ExtensionBrowser(this.config) : new DotBrowser(this.config); }
 
@@ -50,14 +54,25 @@ export class DotClient extends EventEmitter {
       for (const [key, value] of Object.entries(request.headers)) {
         if (['authorization', 'chatgpt-account-id'].includes(key.toLowerCase())) this.headers[key.toLowerCase()] = String(value);
       }
+      if (request.method === 'POST' && this.uploading && url.pathname === this.prefix + this.path(this.config.filesPath).replace(/\/$/, '')) this.uploading.requests.add(p.requestId);
       if (request.method === 'POST' && this.profile && url.pathname === this.prefix + this.path(this.config.messagesPath)) {
         const body = JSON.parse(request.postData ?? '{}');
         const id = body.request_id ?? body.idempotency_token;
-        if (id && this.pending && body.content?.text === this.pending.text) {
-          this.posts.set(p.requestId, { requestId: id, text: body.content.text });
+        if (id && this.pending && (body.content?.text ?? '') === this.pending.text && this.pending.fileIds.every(id => body.content?.attachments?.some((a: any) => a.file_id === id))) {
+          this.posts.set(p.requestId, { requestId: id, text: body.content?.text ?? '' });
           await this.pending.onRequest(id);
         }
       }
+    } else if (method === 'Network.responseReceived' && this.uploading?.requests.has(p.requestId) && p.response.status >= 400) {
+      this.uploading.reject(p.response.status === 401 || p.response.status === 403 ? new DotAccessError(p.response.status) : new Error(`dot 附件上传失败（HTTP ${p.response.status}），请打开 dot 检查后重试。`));
+    } else if (method === 'Network.loadingFailed' && this.uploading?.requests.has(p.requestId)) {
+      this.uploading.reject(new Error('dot 附件上传中断，请打开 dot 检查后重试。'));
+    } else if (method === 'Network.loadingFinished' && this.uploading?.requests.has(p.requestId)) {
+      const uploading = this.uploading;
+      const response = await this.window!.command('Network.getResponseBody', { requestId: p.requestId });
+      const data = JSON.parse(response.base64Encoded ? Buffer.from(response.body, 'base64').toString() : response.body);
+      if (!data.id) uploading.reject(new Error('dot 没有确认附件上传，请打开 dot 检查后重试。'));
+      else { uploading.ids.push(data.id); if (uploading.ids.length === uploading.expected) uploading.resolve(uploading.ids); }
     } else if (method === 'Network.loadingFinished' && this.posts.has(p.requestId)) {
       const post = this.posts.get(p.requestId)!;
       this.posts.delete(p.requestId);
@@ -78,6 +93,9 @@ export class DotClient extends EventEmitter {
     if (!this.window) throw new Error('请先登录 ChatGPT。');
     const url = new URL(this.prefix + path, this.config.homeUrl).href;
     const result = await this.window.run('request', { url, headers: this.headers, timeoutMs: this.config.requestTimeoutMs });
+    return this.json(result);
+  }
+  private json(result: { status: number; text: string }): any {
     if (result.status === 401 || result.status === 403) throw new DotAccessError(result.status);
     if (result.status >= 400) throw new Error(`ChatGPT 请求失败（HTTP ${result.status}），请打开 ChatGPT 检查。`);
     try { return JSON.parse(result.text); } catch { throw new Error('ChatGPT 页面尚未就绪，请完成登录。'); }
@@ -128,26 +146,67 @@ export class DotClient extends EventEmitter {
   async findRequest(requestId: string, after: string): Promise<string | undefined> {
     return (await this.messages(after)).find(m => m.request_id === requestId)?.id;
   }
-  async send(text: string, files: LocalFile[], onRequest: (id: string) => Promise<void>, beforeSubmit: () => Promise<void>): Promise<string> {
-    if (files.length) throw new Error('附件功能正在接入，请先用文字测试连接。');
+  async transcribe(file: LocalFile): Promise<string> {
+    if (!this.window) throw new Error('请先连接 dot。');
+    const url = new URL(this.prefix + this.config.transcribePath, this.config.homeUrl).href;
+    const result = this.json(await this.window.run('transcribe', { url, headers: this.headers, timeoutMs: this.config.uploadTimeoutMs, base64: (await readFile(file.path)).toString('base64'), name: file.name, mime: file.mime }));
+    if (typeof result.text !== 'string' || !result.text.trim()) throw new Error('这条语音没有识别出文字，请重新录一条或改发文字。');
+    return result.text.trim();
+  }
+  async download(attachment: DotAttachment, store: MediaStore): Promise<LocalFile> {
+    if (!this.window || !this.profile) throw new Error('请先连接 dot。');
+    const file = attachment.url ? { download_url: attachment.url } : await this.api(this.path(this.config.filesPath, attachment.id));
+    if (!file.download_url) throw new Error('dot 的附件还不能下载，请稍后重试。');
+    const result = await this.window.run('download', { url: file.download_url, headers: this.headers, timeoutMs: this.config.uploadTimeoutMs, maxBytes: store.config.maxMediaBytes });
+    if (result.sameOrigin && (result.status === 401 || result.status === 403)) throw new DotAccessError(result.status);
+    if (result.status >= 400) throw new Error(`dot 附件下载失败（HTTP ${result.status}），请稍后重试。`);
+    return store.save(`${this.profile.roomId}:${attachment.id}`, file.name || attachment.name, Buffer.from(result.base64, 'base64'), file.mime_type || result.mime || attachment.mime);
+  }
+  private async upload(files: LocalFile[]): Promise<string[]> {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const result = new Promise<string[]>((resolve, reject) => {
+      this.uploading = { requests: new Set(), ids: [], expected: files.length, resolve, reject };
+      timer = setTimeout(() => reject(new Error('dot 附件上传超时，请打开 dot 检查后重试。')), this.config.uploadTimeoutMs);
+    });
+    try { return (await Promise.all([result, this.window!.setFiles(files.map(file => file.path))]))[0]; }
+    finally { clearTimeout(timer); this.uploading = undefined; }
+  }
+  async send(text: string, files: LocalFile[], onRequest: (id: string) => Promise<void>, beforeSubmit: () => Promise<void>, preparation: { resume: boolean; begin: () => Promise<void>; reset: () => Promise<void>; notSubmitted: () => Promise<void> }): Promise<string> {
     if (!this.profile || !this.window) throw new Error('请先连接 dot。');
     if (this.pending) throw new Error('上一条消息仍在发送。');
     await this.discover();
     const page = this.window;
     if (await page.url() !== this.profile.url) await this.window.navigate(this.profile.url);
-    const ready = await page.run('composer', { composerSelectors: this.config.composerSelectors, attachmentSelectors: this.config.draftAttachmentSelectors });
+    const composerArgs = { composerSelectors: this.config.composerSelectors, attachmentSelectors: this.config.draftAttachmentSelectors, text };
+    if (preparation.resume && files.length) {
+      if (!(await page.run('owned-draft', { ...composerArgs, names: files.map(f => f.name) }))) throw new Error('ChatGPT 输入框已被修改，请先处理其中的草稿再继续。');
+      await page.navigate(this.profile.url);
+      await preparation.reset();
+    }
+    const ready = await page.run('composer', { ...composerArgs, resumeDraft: preparation.resume });
     if (ready === 'attachment') throw new Error('ChatGPT 输入框里有附件或正在上传的文件，请先处理完再继续。');
-    if (ready !== 'ready') throw new Error(ready === 'draft' ? 'ChatGPT 输入框里有未发送内容，请先发送或清空，再继续连接。' : '找不到 dot 输入框，请打开 ChatGPT，等页面加载完成后重试。');
+    if (ready !== 'ready' && ready !== 'composed') throw new Error(ready === 'draft' ? 'ChatGPT 输入框里有未发送内容，请先发送或清空，再继续连接。' : '找不到 dot 输入框，请打开 ChatGPT，等页面加载完成后重试。');
+    await preparation.begin();
+    const fileIds = files.length ? await this.upload(files) : [];
+    if (text && ready !== 'composed') {
+      await page.run('focus-composer', composerArgs);
+      await page.insertText(text);
+    }
+    const sendArgs = { ...composerArgs, sendSelectors: this.config.sendSelectors };
+    const deadline = Date.now() + (files.length ? this.config.uploadTimeoutMs : this.config.requestTimeoutMs);
+    while (!(await page.run('send-ready', sendArgs))) {
+      if (Date.now() > deadline) throw new Error('dot 的发送按钮尚未准备好，消息已保留，会自动重试。');
+      await delay(this.config.composerPollIntervalMs);
+    }
     await beforeSubmit();
-    await page.insertText(text);
     let timer: ReturnType<typeof setTimeout> | undefined;
     try {
       const result = new Promise<string>((resolve, reject) => {
-        this.pending = { text, resolve, reject, onRequest };
+        this.pending = { text, fileIds, resolve, reject, onRequest };
         timer = setTimeout(() => reject(new Error('ChatGPT 发送结果还未确认，请打开 ChatGPT 核对这一条消息。')), this.config.sendTimeoutMs);
       });
-      const clicked = await page.run('send', { sendSelectors: this.config.sendSelectors });
-      if (!clicked) this.pending!.reject(new Error('ChatGPT 发送按钮尚未就绪，请在 ChatGPT 中检查。'));
+      const clicked = await page.run('send', sendArgs);
+      if (!clicked) { await preparation.notSubmitted(); this.pending!.reject(new Error('dot 的发送按钮尚未准备好，消息已保留，会自动重试。')); }
       return await result;
     } finally { clearTimeout(timer); this.pending = undefined; }
   }

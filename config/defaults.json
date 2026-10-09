@@ -9,7 +9,8 @@
     "requestTimeoutMs": 20000,
     "longPollTimeoutMs": 40000,
     "retryDelayMs": 3000,
-    "maxTextLength": 2000
+    "maxTextLength": 2000,
+    "voiceSampleRate": 24000
   },
   "dot": {
     "browser": "external",
@@ -32,10 +33,13 @@
     "filesPath": "/messaging/rooms/{roomId}/files/{fileId}",
     "transcribePath": "/transcribe",
     "pollIntervalMs": 5000,
+    "composerPollIntervalMs": 100,
     "requestTimeoutMs": 30000,
     "sendTimeoutMs": 60000,
+    "uploadTimeoutMs": 120000,
     "historyPageSize": 20,
     "composerSelectors": ["#prompt-textarea", "[contenteditable='true'][role='textbox']", "textarea"],
+    "fileInputSelectors": ["input[type='file'][multiple]", "input[type='file']"],
     "draftAttachmentSelectors": ["input[type='file']", "[data-testid*='attachment']", "img[src^='blob:']", "button[aria-label*='Remove']", "button[aria-label*='移除']", "button[aria-label*='删除']", "button[aria-label*='取消上传']"],
     "sendSelectors": ["[data-testid='send-button']", "button[aria-label='Send message']", "button[aria-label='发送消息']", "button[aria-label='Send']", "button[aria-label='发送']", "button[aria-label='傳送']"]
   },
