@@ -48,6 +48,7 @@
     },
     "files": [
       "dist/**",
+      "!dist/extension/**",
       "config/defaults.json",
       "assets/**",
       "LICENSE",
@@ -72,12 +73,6 @@
       "oneClick": true,
       "perMachine": false,
       "deleteAppDataOnUninstall": false
-    },
-    "extraResources": [
-      {
-        "from": "dist/extension",
-        "to": "chrome-extension"
-      }
-    ]
+    }
   }
 }

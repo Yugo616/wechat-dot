@@ -33,12 +33,12 @@ jobs:
       - run: npm run check
       - run: npm run smoke
       - run: node tests/desktop.mjs
-      - name: Install browser for extension test
+      - name: Install browser for local connection test
         run: npx playwright-core install chromium
-      - name: Test Chrome extension connection
+      - name: Test default browser connection
         run: node tests/desktop.mjs
         env:
-          WECHAT_DOT_TEST_BROWSER: extension
+          WECHAT_DOT_TEST_BROWSER: default
       - name: Package installer
         run: npx electron-builder --${{ matrix.platform }} --${{ matrix.arch }} --publish never
         env:

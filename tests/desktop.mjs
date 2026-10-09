@@ -17,6 +17,7 @@ const requests = [];
 let incoming = [], sent = [], nativeSends = [], messages = [{ id: 'old', account_user_id: 'dot-member', content: { text: '不应重发的历史' } }];
 const server = createServer(async (req, res) => {
   const url = new URL(req.url, 'http://localhost');
+  if (url.pathname === '/dots/thread') { res.writeHead(302, { Location: '/dots/home' }); return res.end(); }
   if (url.pathname !== '/fixture/draft' && !url.pathname.endsWith('getupdates')) { requests.push({ at: new Date().toISOString(), method: req.method, path: url.pathname }); if (requests.length > 30) requests.shift(); }
   const parts = []; for await (const b of req) parts.push(b);
   const body = Buffer.concat(parts).toString();
@@ -44,20 +45,28 @@ const server = createServer(async (req, res) => {
       messages.push({ id: `reply-${nativeSends.length}`, account_user_id: 'dot-member', content: { text: `收到：${payload.content.text}` } });
       return res.end(JSON.stringify({ id }));
     }
+    const limit = Number(url.searchParams.get('limit') || 20);
+    if (limit > 32) {
+      res.statusCode = 422;
+      return res.end(JSON.stringify({ detail: [{ loc: ['query', 'limit'], msg: 'Input should be less than or equal to 32', type: 'less_than_equal' }] }));
+    }
     let items = messages;
     if (url.searchParams.has('after')) items = items.slice(items.findIndex(m => m.id === url.searchParams.get('after')) + 1);
-    else items = items.slice(-Number(url.searchParams.get('limit') || 50));
+    else items = items.slice(-limit);
     return res.end(JSON.stringify({ items, next_cursor: null }));
   }
-  res.setHeader('Content-Type', 'text/html');
-  res.end(`<!doctype html><form><span id="attachment"><button type="button" aria-label="Remove file">private-draft.png</button></span><textarea id="prompt-textarea"></textarea><button type="button" data-testid="send-button" onclick="send()">Send</button></form><script>
+  res.setHeader('Content-Type', 'text/html; charset=utf-8');
+  res.end(`<!doctype html><form><span id="attachment"><button type="button" aria-label="Remove file">private-draft.png</button></span><div contenteditable="true" role="textbox" aria-label="訊息" style="min-height:32px"></div><button type="button" aria-label="傳送" onclick="send()">傳送</button></form><script>
     setInterval(async()=>{const s=await fetch("/fixture/draft").then(r=>r.json());if(!s.attachment)document.getElementById("attachment")?.remove();},50);
-    async function send(){const text=document.querySelector('textarea').value;const request_id=crypto.randomUUID();await fetch('/backend-api/messaging/rooms/room/messages',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer fixture-chatgpt','ChatGPT-Account-Id':'fixture-account'},body:JSON.stringify({content:{text},request_id,idempotency_token:request_id})});document.querySelector('textarea').value='';}
+    async function send(){const composer=document.querySelector('[contenteditable]');const text=composer.innerText;const request_id=crypto.randomUUID();await fetch('/backend-api/messaging/rooms/room/messages',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer fixture-chatgpt','ChatGPT-Account-Id':'fixture-account'},body:JSON.stringify({content:{text},request_id,idempotency_token:request_id})});composer.innerText='';}
   </script>`);
 }).listen(0, '127.0.0.1');
 await once(server, 'listening');
 const base = `http://127.0.0.1:${server.address().port}`;
-const dotConfig = { browser: process.env.WECHAT_DOT_TEST_BROWSER ?? 'embedded', homeUrl: base + '/', pollIntervalMs: 50, sendTimeoutMs: 4000 };
+const browserMode = process.env.WECHAT_DOT_TEST_BROWSER ?? 'embedded';
+const externalBrowser = ['external', 'default'].includes(browserMode);
+const dotConfig = { ...(browserMode === 'default' ? {} : { browser: browserMode }), homeUrl: base + '/', pollIntervalMs: 50, sendTimeoutMs: 4000 };
+if (externalBrowser) dotConfig.browserExecutables = { [process.platform]: [process.env.WECHAT_DOT_TEST_CHROME || chromium.executablePath()] };
 let extensionContext;
 if (dotConfig.browser === 'extension') {
   const defaults = JSON.parse(await readFile('config/defaults.json', 'utf8'));
@@ -81,6 +90,10 @@ async function reopenSetup() {
 try {
   desktop = await electron.launch({ args: ['.'], env: { ...process.env, WECHAT_DOT_DATA: data } });
   const page = await desktop.firstWindow();
+  if (browserMode === 'default') {
+    assert.equal(await page.getByRole('button', { name: '安装 Chrome 扩展', exact: true }).isVisible(), false, 'The default installer must not ask the user to load an extension');
+    assert.equal(await page.getByRole('button', { name: '登录 ChatGPT', exact: true }).isVisible(), true);
+  }
   await page.getByRole('button', { name: '微信扫码', exact: true }).click();
   await page.locator('#weixin-badge[data-status="ready"]').waitFor();
   if (extensionContext) {
@@ -95,15 +108,15 @@ try {
     await popup.locator('#detail').filter({ hasText: '已连接' }).waitFor();
     await popup.close();
   }
-  if (process.env.WECHAT_DOT_TEST_BROWSER === 'external') await page.getByRole('button', { name: '登录完成，识别 dot' }).click();
+  if (externalBrowser) await page.getByRole('button', { name: '登录完成，识别 dot' }).click();
   await page.locator('#dot-badge[data-status="ready"]').waitFor({timeout:45000});
   let managedPage, documentId;
   if (extensionContext) {
     managedPage = extensionContext.pages().find(p => p.url().startsWith(base));
     assert.equal(new URL(managedPage.url()).pathname, '/');
-    documentId = await managedPage.evaluate(() => { history.pushState({}, '', '/dots/thread'); return window.fixtureDocumentId = crypto.randomUUID(); });
+    documentId = await managedPage.evaluate(() => { history.pushState({}, '', '/dots/home'); return window.fixtureDocumentId = crypto.randomUUID(); });
   }
-  if (process.env.WECHAT_DOT_TEST_BROWSER === 'external') browserPort = (await readFile(join(data, 'ChatGPT Browser', 'DevToolsActivePort'), 'utf8')).split('\n')[0];
+  if (externalBrowser) browserPort = (await readFile(join(data, 'ChatGPT Browser', 'DevToolsActivePort'), 'utf8')).split('\n')[0];
   await page.getByRole('button', { name: /开始连接/ }).click();
   await page.getByRole('button', { name: '暂停连接' }).waitFor();
   await waitFor(async () => !(await setupVisible()), 'Connected setup did not move to the tray');
@@ -115,7 +128,8 @@ try {
   assert.equal(nativeSends.length, 0, 'An attachment-only draft must not be submitted');
   const deliveryStarted = Date.now();
   draftAttachment = false;
-  await waitFor(() => sent.length === 1, 'Native text loop did not deliver', 60000);
+  await waitFor(async () => sent.length === 1 || (await page.evaluate(() => window.wechatDot.status())).needsReview, 'Native text loop did not deliver', 60000);
+  assert.equal(sent.length, 1, 'The current dot composer must send its reply without a manual recovery step');
   console.log('FIXTURE DELIVERY MS', Date.now() - deliveryStarted);
   assert.equal(sent[0].item_list[0].text_item.text, '收到：你好 dot');
   assert.equal(nativeSends.length, 1);
@@ -138,7 +152,7 @@ try {
   messages.push({ id: 'proactive', account_user_id: 'dot-member', content: { text: '主动问候' } });
   await waitFor(() => sent.length === 3, 'Proactive message did not deliver');
   assert.equal(sent[2].item_list[0].text_item.text, '主动问候');
-  if (process.env.WECHAT_DOT_TEST_BROWSER === 'external') {
+  if (externalBrowser) {
     browserPort = (await readFile(join(data, 'ChatGPT Browser', 'DevToolsActivePort'), 'utf8')).split('\n')[0];
     const exited = once(desktop.process(), 'exit');
     await desktop.evaluate(({ app }) => { setTimeout(() => app.exit(0), 0); });
@@ -186,8 +200,16 @@ try {
   await settings.evaluate(() => window.wechatDot.action('discover'));
   assert.equal((await settings.evaluate(() => window.wechatDot.status())).dot, 'error');
   assert.equal(dotRequests, beforeLogout, 'An empty login session must not reuse an old access token');
+  await desktop.close(); desktop = undefined;
+  const beforePausedRestart = dotRequests;
+  desktop = await electron.launch({ args: ['.'], env: { ...process.env, WECHAT_DOT_DATA: data } });
+  const pausedRestart = await desktop.firstWindow();
+  await pausedRestart.locator('#dot-button').waitFor();
+  assert.equal((await pausedRestart.evaluate(() => window.wechatDot.status())).dot, 'idle', 'Restarting a paused connection must wait for an explicit login action');
+  await new Promise(r => setTimeout(r, 300));
+  assert.equal(dotRequests, beforePausedRestart, 'A paused restart must not make automatic ChatGPT requests');
   console.log('PASS: denied login and polling pause requests until the user explicitly retries.');
-  console.log('PASS: real Electron UI, tray lifecycle, QR fixture, draft attachments, native text reply, dedup, restart and proactive message.' + (process.env.WECHAT_DOT_TEST_BROWSER === 'external' ? ' External-browser crash recovery also passed.' : '') + ' These are local fixtures, not live accounts.');
+  console.log('PASS: real Electron UI, tray lifecycle, QR fixture, draft attachments, native text reply, dedup, restart and proactive message.' + (externalBrowser ? ' External-browser crash recovery also passed.' : '') + ' These are local fixtures, not live accounts.');
 } catch (e) {
   console.log('FIXTURE DRAFT', { draftAttachment, draftPolls, lastDraftPoll });
   console.log('FIXTURE REQUESTS', requests);
@@ -195,7 +217,7 @@ try {
     const browser = await chromium.connectOverCDP(`http://127.0.0.1:${browserPort}`, { noDefaults: true, timeout: 2000 }).catch(() => undefined);
     if (browser) {
       for (const page of browser.contexts()[0].pages()) {
-        console.log('FIXTURE BROWSER', page.url(), await page.evaluate(() => ({ visibility: document.visibilityState, draft: Boolean(document.getElementById('attachment')), text: document.querySelector('textarea')?.value })).catch(() => 'unavailable'));
+        console.log('FIXTURE BROWSER', page.url(), await page.evaluate(() => ({ visibility: document.visibilityState, draft: Boolean(document.getElementById('attachment')), text: document.querySelector('[contenteditable]')?.innerText, charset: document.characterSet, buttons: [...document.querySelectorAll('button')].map(b => b.getAttribute('aria-label')) })).catch(() => 'unavailable'));
       }
       await browser.close();
     }

@@ -1,5 +1,5 @@
 import { _electron as electron } from 'playwright-core';
-import { mkdtemp, rm, readFile } from 'node:fs/promises';
+import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import assert from 'node:assert/strict';
@@ -10,11 +10,8 @@ try {
   const page = await desktop.firstWindow();
   await page.getByRole('heading', { name: 'WeChat Dot', exact: true }).waitFor();
   assert.equal(await page.getByRole('button', { name: /开始连接/ }).isDisabled(), true);
-  const extension = await desktop.evaluate(({ app }) => app.isPackaged ? `${process.resourcesPath}/chrome-extension` : `${app.getAppPath()}/dist/extension`);
-  const manifest = JSON.parse(await readFile(join(extension, 'manifest.json'), 'utf8'));
-  assert.equal(manifest.manifest_version, 3);
-  assert.equal(manifest.name, 'WeChat Dot');
-  await Promise.all(['background.js', 'monitor.js', 'content.js', 'popup.html'].map(file => readFile(join(extension, file))));
+  assert.equal(await page.getByRole('button', { name: '登录 ChatGPT', exact: true }).isVisible(), true);
+  assert.equal(await page.getByRole('button', { name: '安装 Chrome 扩展', exact: true }).isVisible(), false);
   await page.screenshot({ path: 'assets/screenshot.png', scale: 'css' });
-  console.log('PASS: desktop launches with a fresh profile; connect waits for both accounts; Chrome extension files are included.');
+  console.log('PASS: desktop launches with a fresh profile; connect waits for both accounts; no extension setup is shown.');
 } finally { if (desktop) await desktop.close(); await rm(data, { recursive: true, force: true }); }
