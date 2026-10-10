@@ -111,16 +111,24 @@ export class DotBrowser extends EventEmitter {
       for (const p of this.pending.values()) { clearTimeout(p.timer); p.reject(new Error('ChatGPT 浏览器已关闭，请重新登录。')); }
       this.pending.clear(); this.emit('closed');
     });
-    const targets = await this.command('Target.getTargets', {}, true);
-    const target = targets.targetInfos.find((t: any) => t.type === 'page' && t.url.startsWith(new URL(this.config.homeUrl).origin)) ?? targets.targetInfos.find((t: any) => t.type === 'page');
-    if (!target) throw new Error('浏览器未打开 ChatGPT 页面，请重试。');
-    this.targetId = target.targetId;
+    this.targetId = await this.pageTarget();
     this.sessionId = (await this.command('Target.attachToTarget', { targetId: this.targetId, flatten: true }, true)).sessionId;
     await this.command('Network.enable'); await this.command('Page.enable');
     // Keep the dedicated page active while its window is minimized.
     await this.command('Emulation.setFocusEmulationEnabled', { enabled: true });
     this.emit('loaded');
     if (show) await this.show(); else await this.hide();
+  }
+  private async pageTarget(): Promise<string> {
+    const origin = new URL(this.config.homeUrl).origin + '/';
+    const deadline = Date.now() + this.config.requestTimeoutMs;
+    while (Date.now() < deadline) {
+      const targets = await this.command('Target.getTargets', {}, true);
+      const target = targets.targetInfos.find((t: any) => t.type === 'page' && t.url.startsWith(origin));
+      if (target) return target.targetId;
+      await delay(this.config.composerPollIntervalMs);
+    }
+    throw new Error('ChatGPT 页面启动超时，请重新登录。');
   }
   command(method: string, params: object = {}, root = false, timeoutMs = this.config.requestTimeoutMs): Promise<any> {
     if (this.embedded) return this.embedded.webContents.debugger.sendCommand(method, params);

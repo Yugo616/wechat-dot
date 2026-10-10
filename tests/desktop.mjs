@@ -294,6 +294,7 @@ try {
 } catch (e) {
   console.log('FIXTURE DRAFT', { draftAttachment, draftPolls, lastDraftPoll });
   console.log('FIXTURE REQUESTS', requests);
+  if (externalBrowser && !browserPort) browserPort = await readFile(join(data, 'ChatGPT Browser', 'DevToolsActivePort'), 'utf8').then(value => value.split('\n')[0]).catch(() => undefined);
   if (browserPort) {
     const browser = await chromium.connectOverCDP(`http://127.0.0.1:${browserPort}`, { noDefaults: true, timeout: 2000 }).catch(() => undefined);
     if (browser) {
