@@ -1,22 +1,20 @@
 在微信里和你的 dot 聊天。
 
-[安装包（尚未发布）](https://github.com/Yugo616/wechat-dot/releases)
+[下载安装包（准备中）](https://github.com/Yugo616/wechat-dot/releases)
 
-安装版还在开发。Mac 已跑通微信与原有 dot 的连续文字对话，安装包暂未发布。
+免费开源，运行在你的 Mac 或 Windows 电脑上。连接你已有的 ChatGPT dot，不需要另购 API 或租服务器。
 
-目标是三步使用：
+安装包发布后，只需三步：
 
 1. 下载并打开安装包。
 2. 扫微信二维码，登录 ChatGPT。
 3. 点击「开始连接」。
 
-正式安装流程不要求开发者模式、手动加载扩展、安装 Node 或填写 API Key。
+不用装浏览器扩展、Node，也不用填写 API Key。程序会打开电脑上的 Chrome 或 Edge 完成登录。
 
-使用你已有的 ChatGPT/dot 账号，不需要另购 API 或租服务器。
+![WeChat Dot 实际界面](assets/screenshot.png)
 
-![开发版实际截图](assets/screenshot.png)
-
-支持文字、图片、文件、语音输入，以及 dot 主动发来的消息。文字、上下文和主动消息已在 Mac 上实测；媒体收发已通过本地测试，仍待真实账号验证。进度见[验证记录](docs/testing.md)。
+文字、连续对话、dot 主动消息已在 Mac 上实测。图片、文件、语音输入已接入，真实收发仍在测试。详细进度见[验证记录](docs/testing.md)。
 
 ### 电脑要一直开着吗？
 
