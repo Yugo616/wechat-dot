@@ -4,6 +4,8 @@
 
 免费开源，运行在你的 Mac 或 Windows 电脑上。连接你已有的 ChatGPT dot，不需要另购 API 或租服务器。
 
+基于腾讯的 [openclaw-weixin](https://www.npmjs.com/package/@tencent-weixin/openclaw-weixin) 改造，沿用微信扫码和消息收发，把原来连接 OpenClaw 的一端换成你自己的 ChatGPT dot。
+
 安装包发布后，只需三步：
 
 1. 下载并打开安装包。
@@ -12,7 +14,7 @@
 
 不用装浏览器扩展、Node，也不用填写 API Key。程序会打开电脑上的 Chrome 或 Edge 完成登录。
 
-![WeChat Dot 实际界面](assets/screenshot.png)
+![WeChat Dot 实际界面](https://raw.githubusercontent.com/Yugo616/wechat-dot/main/assets/screenshot.png)
 
 文字、连续对话、dot 主动消息已在 Mac 上实测。图片、文件、语音输入已接入，真实收发仍在测试。详细进度见[验证记录](docs/testing.md)。
 
