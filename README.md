@@ -1,6 +1,6 @@
 在微信里和你的 dot 聊天。
 
-[下载预览版](https://github.com/Yugo616/wechat-dot/releases/tag/v0.1.0-alpha.4)
+[下载预览版](https://github.com/Yugo616/wechat-dot/releases/tag/v0.1.0-alpha.6)
 
 免费开源，运行在你的 Mac 或 Windows 电脑上。连接你已有的 ChatGPT dot，不需要另购 API 或租服务器。
 
