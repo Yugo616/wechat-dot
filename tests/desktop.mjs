@@ -151,6 +151,14 @@ async function reopenSetup() {
 try {
   desktop = await launchDesktop();
   const page = await desktop.firstWindow();
+  await page.evaluate(() => {
+    window.fixtureStatusChanges = [];
+    window.wechatDot.onStatus(s => {
+      const next = JSON.stringify({ dot: s.dot, dotDetail: s.dotDetail, problem: s.problem });
+      if (next !== window.fixtureStatusChanges.at(-1)) window.fixtureStatusChanges.push(next);
+      if (window.fixtureStatusChanges.length > 20) window.fixtureStatusChanges.shift();
+    });
+  });
   if (browserMode === 'default') {
     assert.equal(await page.getByRole('button', { name: '安装 Chrome 扩展', exact: true }).isVisible(), false, 'The default installer must not ask the user to load an extension');
     assert.equal(await page.getByRole('button', { name: '登录 ChatGPT', exact: true }).isVisible(), true);
@@ -330,8 +338,12 @@ try {
 } catch (e) {
   console.log('FIXTURE DRAFT', { draftAttachment, draftPolls, lastDraftPoll });
   console.log('FIXTURE REQUESTS', requests);
+  console.log('FIXTURE DELIVERIES', { sent, nativeSends });
+  const saved = await readFile(join(data, 'state.json'), 'utf8').then(JSON.parse).catch(() => undefined);
+  console.log('FIXTURE QUEUES', saved && { inbound: saved.inbound, outbound: saved.outbound });
   if (externalBrowser && !browserPort) browserPort = await readFile(join(data, 'ChatGPT Browser', 'DevToolsActivePort'), 'utf8').then(value => value.split('\n')[0]).catch(() => undefined);
   if (browserPort) {
+    console.log('FIXTURE TARGETS', await fetch(`http://127.0.0.1:${browserPort}/json/list`, { signal: AbortSignal.timeout(3000) }).then(r => r.json()).catch(e => e.message));
     const browser = await chromium.connectOverCDP(`http://127.0.0.1:${browserPort}`, { noDefaults: true, timeout: 2000 }).catch(() => undefined);
     if (browser) {
       for (const page of browser.contexts()[0].pages()) {
@@ -343,6 +355,7 @@ try {
   if (desktop) {
     for (const p of desktop.windows()) console.log('FIXTURE WINDOW', p.url());
     console.log('FIXTURE STATUS', await (await desktop.firstWindow()).evaluate(() => window.wechatDot.status()).catch(() => 'App exited'));
+    console.log('FIXTURE STATUS CHANGES', await (await desktop.firstWindow()).evaluate(() => window.fixtureStatusChanges).catch(() => []));
   }
   throw e;
 } finally {
