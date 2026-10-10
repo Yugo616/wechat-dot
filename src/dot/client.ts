@@ -16,6 +16,7 @@ export class DotClient extends EventEmitter {
   members = new Set<string>();
   private headers: Record<string, string> = {};
   private prefix: string;
+  private opening?: Promise<void>;
   private posts = new Map<string, { requestId: string; text: string }>();
   private pending?: { text: string; fileIds: string[]; resolve: (id: string) => void; reject: (e: Error) => void; onRequest: (id: string) => Promise<void> };
   private uploading?: { requests: Set<string>; ids: string[]; expected: number; resolve: (ids: string[]) => void; reject: (error: Error) => void };
@@ -24,24 +25,34 @@ export class DotClient extends EventEmitter {
 
   async login(): Promise<boolean> {
     await this.dispose(); this.profile = undefined;
-    const browser = this.window = this.createBrowser();
-    this.listen(browser);
-    await browser.login();
-    return browser.manualLogin;
+    await this.openBrowser(browser => browser.login());
+    return this.window!.manualLogin;
   }
   async finishLogin(): Promise<void> { if (this.window?.manualLogin) { await this.dispose(); await this.open(false); } }
   private listen(browser: DotBrowser): void {
-    browser.on('network', (method, params) => { void this.observe(method, params).catch(e => this.emit('problem', e)); });
-    browser.on('loaded', () => this.emit('loaded'));
-    browser.on('problem', e => this.emit('problem', e));
+    browser.on('network', (method, params) => { if (this.window === browser) void this.observe(method, params).catch(e => this.emit('problem', e)); });
+    browser.on('loaded', () => { if (this.window === browser) this.emit('loaded'); });
+    browser.on('problem', e => { if (this.window === browser) this.emit('problem', e); });
     browser.on('closed', () => { if (this.window === browser) this.window = undefined; });
   }
 
   async open(show = true): Promise<void> {
+    if (this.opening) await this.opening;
     if (this.window) { if (show) await this.window.show(); return; }
+    await this.openBrowser(browser => browser.open(show));
+  }
+  private async openBrowser(start: (browser: DotBrowser) => Promise<void>): Promise<void> {
     const browser = this.window = this.createBrowser();
     this.listen(browser);
-    try { await browser.open(show); } catch (e) { this.window = undefined; await browser.dispose(); throw e; }
+    const opening = this.opening = Promise.resolve().then(async () => {
+      await start(browser);
+      if (this.window !== browser) throw new Error('ChatGPT 浏览器已关闭，请重新登录。');
+    }).catch(async error => {
+      if (this.window === browser) this.window = undefined;
+      await browser.dispose(); throw error;
+    });
+    try { await opening; }
+    finally { if (this.opening === opening) this.opening = undefined; }
   }
 
   private async observe(method: string, p: any): Promise<void> {
@@ -101,8 +112,8 @@ export class DotClient extends EventEmitter {
     try { return JSON.parse(result.text); } catch { throw new Error('ChatGPT 页面尚未就绪，请完成登录。'); }
   }
   async discover(): Promise<DotProfile> {
-    if (this.window?.manualLogin) throw new Error('在 Chrome 中登录后，点击「登录完成，识别 dot」。');
     await this.open(false);
+    if (this.window!.manualLogin) throw new Error('在 Chrome 中登录后，点击「登录完成，识别 dot」。');
     if (new URL(await this.window!.url()).origin !== new URL(this.config.homeUrl).origin) throw new Error('请在浏览器中完成 ChatGPT 登录。');
     const session = await this.window!.run('request', { url: this.config.sessionPath, timeoutMs: this.config.requestTimeoutMs });
     if (session.status === 401 || session.status === 403) throw new DotAccessError(session.status);
@@ -210,5 +221,8 @@ export class DotClient extends EventEmitter {
       return await result;
     } finally { clearTimeout(timer); this.pending = undefined; }
   }
-  async dispose(): Promise<void> { const browser = this.window; this.window = undefined; this.headers = {}; await browser?.dispose(); }
+  async dispose(): Promise<void> {
+    this.opening = undefined;
+    const browser = this.window; this.window = undefined; this.headers = {}; await browser?.dispose();
+  }
 }

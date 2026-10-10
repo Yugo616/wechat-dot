@@ -151,6 +151,7 @@ async function reopenSetup() {
 try {
   desktop = await launchDesktop();
   const page = await desktop.firstWindow();
+  await page.getByRole('heading', { name: 'WeChat Dot', exact: true }).waitFor();
   await page.evaluate(() => {
     window.fixtureStatusChanges = [];
     window.wechatDot.onStatus(s => {
