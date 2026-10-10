@@ -11,7 +11,7 @@ function render(s: AppStatus) {
     el(`${name}-detail`).textContent = s[name === 'dot' ? 'dotDetail' : 'weixinDetail'];
   }
   el('version').textContent = `v${s.version}`;
-  const problem = s.problem || (s.weixin === 'error' ? s.weixinDetail : s.dot === 'error' ? s.dotDetail : undefined);
+  const problem = s.problem || (s.weixin === 'error' ? s.weixinDetail : s.dot === 'error' ? s.dotDetail : s.weixinSendError);
   el('detail').textContent = problem || s.detail;
   el('detail').classList.toggle('problem', Boolean(problem));
   el('weixin-button').textContent = s.weixin === 'idle' ? '微信扫码' : '重新扫码';

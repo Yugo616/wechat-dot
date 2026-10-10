@@ -6,6 +6,9 @@ import { parseWeixinJson } from './json';
 export class WeixinExpiredError extends Error {
   constructor() { super('微信登录已过期，请重新扫码。'); }
 }
+export class WeixinSendRejectedError extends Error {
+  constructor() { super('微信暂时拒收回复。请在微信里发一句话，程序会再试；未发出的回复已保留。'); }
+}
 
 // Wire format adapted from Tencent's MIT-licensed openclaw-weixin. See THIRD_PARTY_NOTICES.md.
 export class WeixinClient {
@@ -28,6 +31,7 @@ export class WeixinClient {
     if (!response.ok) throw new Error(`微信连接失败（HTTP ${response.status}），请稍后重试。`);
     const data = parseWeixinJson<any>(await response.text());
     if (data.ret === -14 || data.errcode === -14) throw new WeixinExpiredError();
+    if (endpoint === '/ilink/bot/sendmessage' && (data.ret === -2 || data.errcode === -2)) throw new WeixinSendRejectedError();
     if ((data.ret && data.ret !== 0) || (data.errcode && data.errcode !== 0)) throw new Error(`微信：${data.errmsg || data.errcode || data.ret}`);
     return data as T;
   }

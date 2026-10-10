@@ -6,8 +6,8 @@ export async function acceptWeixin(store: StateStore, messages: WeixinMessage[],
     const known = new Set(s.inbound.map(j => j.id));
     for (const message of messages) {
       if (!message.message_id || message.from_user_id !== s.weixin?.userId || message.message_type !== 1 || (message.message_state != null && message.message_state !== 2)) continue;
-      if (message.context_token) s.contextToken = message.context_token;
       if (known.has(message.message_id)) continue;
+      if (message.context_token) { s.contextToken = message.context_token; delete s.weixinSendError; }
       s.inbound.push({ id: message.message_id, phase: 'pending', message });
       known.add(message.message_id);
     }

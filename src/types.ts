@@ -21,11 +21,11 @@ export interface InboundJob { id: string; message: WeixinMessage; phase: 'pendin
 export interface OutboundJob { id: string; message: DotMessage; part: number; phase: 'pending' | 'sending' | 'done'; media?: Record<number, { file: LocalFile; item?: WeixinItem }> }
 export interface BridgeState {
   version: 1; weixin?: WeixinAccount; dot?: DotProfile;
-  weixinCursor: string; weixinPrimed?: boolean; dotCursor?: string; dotPending?: string[]; contextToken?: string;
+  weixinCursor: string; weixinPrimed?: boolean; dotCursor?: string; dotPending?: string[]; contextToken?: string; weixinSendError?: string;
   inbound: InboundJob[]; outbound: OutboundJob[]; enabled: boolean;
   savedConnections?: Record<string, ConnectionProgress & { dot?: DotProfile }>;
 }
-export type ConnectionProgress = Pick<BridgeState, 'weixinCursor' | 'weixinPrimed' | 'dotCursor' | 'dotPending' | 'contextToken' | 'inbound' | 'outbound'>;
+export type ConnectionProgress = Pick<BridgeState, 'weixinCursor' | 'weixinPrimed' | 'dotCursor' | 'dotPending' | 'contextToken' | 'weixinSendError' | 'inbound' | 'outbound'>;
 export type ConnectionStatus = 'idle' | 'waiting' | 'ready' | 'error';
 export interface AppStatus {
   weixin: ConnectionStatus; dot: ConnectionStatus; running: boolean;
@@ -35,5 +35,6 @@ export interface AppStatus {
   needsReview?: boolean;
   finishLogin?: boolean;
   problem?: string;
+  weixinSendError?: string;
   extension?: boolean;
 }

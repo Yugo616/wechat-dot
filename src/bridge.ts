@@ -3,7 +3,7 @@ import { createHash } from 'node:crypto';
 import type { Config } from './config';
 import type { AppStatus, DotAttachment, InboundJob, LocalFile, WeixinItem } from './types';
 import { StateStore } from './state';
-import { WeixinClient, WeixinExpiredError } from './weixin/client';
+import { WeixinClient, WeixinExpiredError, WeixinSendRejectedError } from './weixin/client';
 import { DotClient } from './dot/client';
 import { DotAccessError } from './dot/errors';
 import { acceptDot, acceptWeixin, nextInbound, splitText } from './queue';
@@ -85,7 +85,7 @@ export class Bridge {
         const page = await this.weixin.updates(this.store.data.weixinCursor, signal);
         if (signal.aborted) break;
         await acceptWeixin(this.store, page.msgs ?? [], page.get_updates_buf);
-        this.status({ weixin: 'ready', weixinDetail: '微信已连接' });
+        this.status({ weixin: 'ready', weixinDetail: '微信已连接', weixinSendError: this.store.data.weixinSendError });
       } catch (e) {
         if (signal.aborted) break;
         this.status({ weixin: 'error', weixinDetail: (e as Error).message });
@@ -171,7 +171,7 @@ export class Bridge {
     return prepared;
   }
   private async deliver(signal: AbortSignal): Promise<void> {
-    if (!this.store.data.contextToken) return;
+    if (!this.store.data.contextToken || this.store.data.weixinSendError) return;
     for (const job of this.store.data.outbound.filter(j => j.phase !== 'done')) {
       const parts: Array<{ text?: string; attachment?: DotAttachment }> = [
         ...splitText(job.message.text, this.config.weixin.maxTextLength).map(text => ({ text })),
@@ -193,7 +193,17 @@ export class Bridge {
           if (!cached.item) await this.store.update(s => { s.outbound.find(j => j.id === job.id)!.media![i].item = item; });
         } else item = { type: 1, text_item: { text: parts[i].text! } };
         if (signal.aborted) return;
-        await this.weixin.send([item], this.store.data.contextToken!, clientId);
+        const context = this.store.data.contextToken!;
+        const lastContextMessageId = this.store.data.inbound.filter(j => j.message.context_token).at(-1)?.id;
+        try { await this.weixin.send([item], context, clientId); }
+        catch (error) {
+          if (!(error instanceof WeixinSendRejectedError)) throw error;
+          await this.store.update(s => {
+            if (s.contextToken === context && s.inbound.filter(j => j.message.context_token).at(-1)?.id === lastContextMessageId) s.weixinSendError = error.message;
+          });
+          this.status({ weixinSendError: this.store.data.weixinSendError });
+          return;
+        }
         await this.store.update(s => { s.outbound.find(j => j.id === job.id)!.part = i + 1; });
       }
       await this.store.update(s => { s.outbound.find(j => j.id === job.id)!.phase = 'done'; });

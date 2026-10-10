@@ -25,6 +25,9 @@ const cdnUploads = [], transcriptions = [];
 let uploadTicket;
 let failedMediaClientId;
 let failedDotUpload = false;
+let rejectWeixinSend = false, rejectedSends = 0;
+let legacyDraft = false;
+const legacyText = '旧版留下的消息\n\n下一段仍要保留。';
 let mediaDownloads = new Set();
 let incoming = [], sent = [], nativeSends = [], messages = [{ id: 'old', account_user_id: 'dot-member', content: { text: '不应重发的历史' } }];
 const server = createServer(async (req, res) => {
@@ -43,6 +46,7 @@ const server = createServer(async (req, res) => {
   if (url.pathname === '/ilink/bot/getupdates') { const msgs = incoming.splice(0); return res.end(JSON.stringify({ ret: 0, msgs, get_updates_buf: 'cursor' })); }
   if (url.pathname === '/ilink/bot/sendmessage') {
     const message = JSON.parse(body).msg;
+    if (rejectWeixinSend) { rejectedSends++; return res.end('{"ret":-2,"errmsg":"prepare failed"}'); }
     if (message.item_list[0].type === 4 && !failedMediaClientId) { failedMediaClientId = message.client_id; res.statusCode = 503; return res.end(); }
     sent.push(message); return res.end('{"ret":0}');
   }
@@ -109,7 +113,7 @@ const server = createServer(async (req, res) => {
     return res.end(JSON.stringify({ items, next_cursor: null }));
   }
   res.setHeader('Content-Type', 'text/html; charset=utf-8');
-  res.end(`<!doctype html><form><span id="attachment"><button type="button" aria-label="Remove file">private-draft.png</button></span><input type="file" multiple onchange="uploadFiles(this.files)"><div contenteditable="true" role="textbox" aria-label="訊息" style="min-height:32px"></div><button type="button" aria-label="傳送" disabled onclick="send()">傳送</button></form><script>
+  res.end(`<!doctype html><form><span id="attachment"><button type="button" aria-label="Remove file">private-draft.png</button></span><input type="file" multiple onchange="uploadFiles(this.files)"><div contenteditable="true" role="textbox" aria-label="訊息" style="min-height:32px">${legacyDraft ? '旧版留下的消息<div><br></div><div>下一段仍要保留。</div>' : ''}</div><button type="button" aria-label="傳送" disabled onclick="send()">傳送</button></form><script>
     let files=[];
     document.querySelector('[contenteditable]').addEventListener('input',()=>{const button=document.querySelector('[aria-label="傳送"]');button.disabled=true;setTimeout(()=>{button.disabled=false;},250);});
     async function uploadFiles(picked){document.querySelector('[aria-label="傳送"]').disabled=true;const previews=document.createElement('span');previews.id='upload-previews';document.querySelector('form').append(previews);for(const file of picked){const image=document.createElement('img');image.src=URL.createObjectURL(file);image.style.height='24px';previews.append(image);const remove=document.createElement('button');remove.type='button';remove.setAttribute('aria-label','Remove file');previews.append(remove);}try{for(const file of picked){const data=new FormData();data.append('file',file);const uploaded=await fetch('/backend-api/messaging/rooms/room/files',{method:'POST',body:data}).then(r=>{if(!r.ok)throw Error('Upload failed');return r.json();});files.push({type:'file',file_id:uploaded.id});}document.querySelector('[aria-label="傳送"]').disabled=false;}catch{}}
@@ -244,6 +248,38 @@ try {
     assert.equal(transcriptions.length, 1, 'Use the supplied transcript without uploading voice again');
     console.log('PASS: image/document bytes and voice with/without a supplied transcript roundtrip through local fixtures.');
   }
+  rejectWeixinSend = true;
+  messages.push({ id: 'temporarily-rejected', account_user_id: 'dot-member', content: { text: '等微信恢复后补送' } });
+  let recoverySettings = await desktop.firstWindow();
+  await waitFor(async () => (await recoverySettings.evaluate(() => window.wechatDot.status())).weixinSendError, 'A rejected reply must show its recovery action');
+  await reopenSetup();
+  assert.match(await recoverySettings.locator('#detail').innerText(), /微信.*发一句话/);
+  await recoverySettings.getByRole('button', { name: '暂停连接', exact: true }).click();
+  assert.equal(await recoverySettings.getByRole('button', { name: '开始连接', exact: true }).isEnabled(), true, 'Pausing a send wait must not lock the receiver');
+  await recoverySettings.getByRole('button', { name: '开始连接', exact: true }).click();
+  await waitFor(async () => (await recoverySettings.evaluate(() => window.wechatDot.status())).running, 'Receiver did not restart while waiting to send');
+  await desktop.close(); desktop = undefined;
+  const saved = JSON.parse(await readFile(join(data, 'state.json'), 'utf8'));
+  saved.inbound.push({ id: 'wx-legacy', phase: 'pending', composing: true, prepared: { text: legacyText, files: [] }, message: { message_id: 'wx-legacy', from_user_id: 'fixture-owner', context_token: 'reply-context', item_list: [{ type: 1, text_item: { text: legacyText } }] } });
+  await writeFile(join(data, 'state.json'), JSON.stringify(saved));
+  legacyDraft = true;
+  desktop = await launchDesktop(); recoverySettings = await desktop.firstWindow();
+  await recoverySettings.getByRole('button', { name: '暂停连接' }).waitFor({ timeout: extensionContext ? 90000 : 30000 });
+  await waitFor(() => nativeSends.some(m => m.content.text === legacyText), 'An owned draft left by old multiline insertion must resume', 15000);
+  legacyDraft = false;
+  assert.ok((await recoverySettings.evaluate(() => window.wechatDot.status())).weixinSendError, 'Restart must keep the recovery notice');
+  await new Promise(r => setTimeout(r, 300));
+  assert.equal(rejectedSends, 1, 'Pause and restart must not repeatedly send a rejected reply');
+  const beforeRecovery = sent.length;
+  rejectWeixinSend = false;
+  const recoveryText = '继续聊\n\n这是一条分段消息。';
+  incoming.push({ message_id: 'wx-recovery', from_user_id: 'fixture-owner', message_type: 1, message_state: 2, context_token: 'reply-context', item_list: [{ type: 1, text_item: { text: recoveryText } }] });
+  await waitFor(() => sent.length === beforeRecovery + 3, 'Fresh WeChat activity must deliver the saved replies and the next answer', 15000);
+  assert.equal(sent[beforeRecovery].item_list[0].text_item.text, '等微信恢复后补送');
+  assert.equal(sent[beforeRecovery + 1].item_list[0].text_item.text, '收到：' + legacyText);
+  assert.equal(sent[beforeRecovery + 2].item_list[0].text_item.text, '收到：' + recoveryText);
+  assert.equal((await recoverySettings.evaluate(() => window.wechatDot.status())).weixinSendError, undefined);
+  console.log('PASS: rejected WeChat reply waits through pause/restart, then fresh activity resumes delivery and a multiline question.');
   await reopenSetup();
   await (await desktop.firstWindow()).getByRole('button', { name: '暂停连接', exact: true }).click();
   await (await desktop.firstWindow()).getByRole('button', { name: '开始连接', exact: true }).waitFor();

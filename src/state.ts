@@ -9,8 +9,8 @@ function binding(s: BridgeState): string | undefined {
   return createHash('sha256').update(JSON.stringify([s.weixin.userId, s.weixin.botId, s.dot.userId, s.dot.accountId, s.dot.roomId])).digest('hex');
 }
 function progress(s: ConnectionProgress): ConnectionProgress {
-  const { weixinCursor, weixinPrimed, dotCursor, dotPending, contextToken, inbound, outbound } = s;
-  return { weixinCursor, weixinPrimed, dotCursor, dotPending, contextToken, inbound, outbound };
+  const { weixinCursor, weixinPrimed, dotCursor, dotPending, contextToken, weixinSendError, inbound, outbound } = s;
+  return { weixinCursor, weixinPrimed, dotCursor, dotPending, contextToken, weixinSendError, inbound, outbound };
 }
 export class StateStore {
   data: BridgeState = emptyState();
@@ -47,7 +47,7 @@ export class StateStore {
       if (!same && previous && next && previous !== next) {
         s.savedConnections ??= {};
         s.savedConnections[previous] = saved;
-        Object.assign(s, s.savedConnections[next] ? progress(s.savedConnections[next]) : { weixinCursor: '', weixinPrimed: false, dotCursor: undefined, dotPending: [], contextToken: undefined, inbound: [], outbound: [] });
+        Object.assign(s, s.savedConnections[next] ? progress(s.savedConnections[next]) : { weixinCursor: '', weixinPrimed: false, dotCursor: undefined, dotPending: [], contextToken: undefined, weixinSendError: undefined, inbound: [], outbound: [] });
         delete s.savedConnections[next];
         s.enabled = false;
       }

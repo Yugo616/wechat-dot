@@ -30,9 +30,18 @@ export async function dotPageAction(action: string, args: any = {}): Promise<any
   }
   const composer = () => (args.composerSelectors as string[]).map(s => document.querySelector<HTMLElement>(s)).find(e => e && e.getBoundingClientRect().height > 0);
   const composerText = (e: HTMLElement) => (e as HTMLTextAreaElement).value ?? e.innerText ?? '';
+  // Older multiline insertion creates empty blocks that innerText counts twice.
+  const draftText = (node: Node): string => {
+    if (node.nodeType === Node.TEXT_NODE) return node.textContent ?? '';
+    if (node instanceof HTMLBRElement) return '\n';
+    const block = (n: Node) => n instanceof HTMLElement && ['DIV', 'P'].includes(n.tagName);
+    const children = [...node.childNodes];
+    if (block(node) && children.length === 1 && children[0] instanceof HTMLBRElement) return '';
+    return children.map((child, index) => ((index && (block(child) || block(children[index - 1]))) ? '\n' : '') + draftText(child)).join('');
+  };
   if (action === 'owned-draft') {
     const e = composer();
-    if (!e || (composerText(e).trim() && composerText(e) !== args.text)) return false;
+    if (!e || (composerText(e).trim() && composerText(e) !== args.text && !(e.isContentEditable && draftText(e) === args.text))) return false;
     const form = e.closest('form') ?? e.parentElement;
     const selected = [...form?.querySelectorAll<HTMLInputElement>('input[type="file"]') ?? []].flatMap(input => [...input.files ?? []].map(f => f.name)).sort();
     if (selected.length) return JSON.stringify(selected) === JSON.stringify([...args.names].sort());
@@ -47,14 +56,22 @@ export async function dotPageAction(action: string, args: any = {}): Promise<any
     const e = composer();
     if (!e) return 'missing';
     const text = composerText(e);
-    if (text.trim() && (!args.resumeDraft || text !== args.text)) return 'draft';
+    const repair = args.resumeDraft && e.isContentEditable && text !== args.text && draftText(e) === args.text;
+    if (text.trim() && (!args.resumeDraft || (text !== args.text && !repair))) return 'draft';
     const form = e.closest('form') ?? e.parentElement;
     for (const selector of args.attachmentSelectors as string[]) {
       for (const item of form?.querySelectorAll<HTMLElement>(selector) ?? []) {
         if (item instanceof HTMLInputElement ? item.files?.length : item.getBoundingClientRect().height > 0) return 'attachment';
       }
     }
-    e.focus(); return text.trim() ? 'composed' : 'ready';
+    e.focus();
+    if (repair) {
+      const range = document.createRange(); range.selectNodeContents(e);
+      const selection = window.getSelection(); selection?.removeAllRanges(); selection?.addRange(range);
+      if (!document.execCommand('delete')) throw new Error('无法恢复上一条消息的输入，请打开 dot 检查。');
+      return 'ready';
+    }
+    return text.trim() ? 'composed' : 'ready';
   }
   if (action === 'focus-composer') {
     const e = composer();
@@ -65,7 +82,10 @@ export async function dotPageAction(action: string, args: any = {}): Promise<any
     const e = composer();
     if (!e) throw new Error('找不到 dot 输入框。');
     e.focus();
-    if (!document.execCommand('insertText', false, args.text)) throw new Error('无法填写 dot 输入框，请打开网页检查。');
+    for (const [index, line] of String(args.text).split('\n').entries()) {
+      if (index && !document.execCommand('insertLineBreak')) throw new Error('无法在 dot 输入框换行，请打开网页检查。');
+      if (line && !document.execCommand('insertText', false, line)) throw new Error('无法填写 dot 输入框，请打开网页检查。');
+    }
     return;
   }
   if (action === 'send' || action === 'send-ready') {

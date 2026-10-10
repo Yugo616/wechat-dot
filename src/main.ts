@@ -40,9 +40,9 @@ async function run(): Promise<void> {
   function publish(patch: Partial<AppStatus>): void {
     const wasRunning = status.running;
     const hadDotError = status.dot === 'error';
-    status = { ...status, ...patch };
+    status = { ...status, ...patch, weixinSendError: store.data.weixinSendError };
     if (!window.isDestroyed()) window.webContents.send('status', status);
-    const needsAttention = Boolean(status.problem || status.needsReview || status.weixin === 'error' || status.dot === 'error');
+    const needsAttention = Boolean(status.problem || status.weixinSendError || status.needsReview || status.weixin === 'error' || status.dot === 'error');
     const title = needsAttention ? '需要处理' : status.running ? '已连接' : '未连接';
     tray.setToolTip(`WeChat Dot · ${title}`);
     tray.setContextMenu(Menu.buildFromTemplate([

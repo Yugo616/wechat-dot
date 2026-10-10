@@ -160,7 +160,16 @@ export class DotBrowser extends EventEmitter {
     throw new Error('ChatGPT 页面加载超时，请打开窗口检查。');
   }
   url(): Promise<string> { return this.evaluate('location.href'); }
-  async insertText(text: string): Promise<void> { await this.command('Input.insertText', { text }); }
+  async insertText(text: string): Promise<void> {
+    for (const [index, line] of text.split('\n').entries()) {
+      if (index) {
+        const key = { key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13, modifiers: 8 };
+        await this.command('Input.dispatchKeyEvent', { ...key, type: 'keyDown', text: '\r', unmodifiedText: '\r' });
+        await this.command('Input.dispatchKeyEvent', { ...key, type: 'keyUp' });
+      }
+      if (line) await this.command('Input.insertText', { text: line });
+    }
+  }
   async setFiles(paths: string[]): Promise<void> {
     const { root } = await this.command('DOM.getDocument');
     for (const selector of this.config.fileInputSelectors) {
