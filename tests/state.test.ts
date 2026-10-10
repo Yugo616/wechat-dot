@@ -22,6 +22,24 @@ test('concurrent updates keep both changes and never publish partial JSON', asyn
   assert.equal(saved.contextToken, 'context'); assert.equal(saved.dotCursor, 'd2');
 });
 
+test('changing WeChat before selecting a dot clears the previous account progress', async t => {
+  const directory = await mkdtemp(join(tmpdir(), 'wechat-dot-first-binding-'));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const store = new StateStore(directory); await store.load();
+  const first = { token: 'first-login', userId: 'first-owner', botId: 'first-bot', baseUrl: '' };
+  await store.connectWeixin(first);
+  await store.update(s => { s.weixinPrimed = true; s.weixinCursor = 'first-cursor'; s.contextToken = 'first-context'; });
+  await store.connectWeixin({ ...first, token: 'refreshed-login' });
+  assert.equal(store.data.weixinCursor, 'first-cursor', 'Logging in to the same account should keep its progress');
+  await store.connectWeixin({ ...first, token: 'second-login', userId: 'second-owner', botId: 'second-bot' });
+  assert.equal(store.data.weixinPrimed, false);
+  assert.equal(store.data.weixinCursor, '');
+  assert.equal(store.data.contextToken, undefined);
+  const reopened = new StateStore(directory); await reopened.load();
+  assert.equal(reopened.data.weixin?.userId, 'second-owner');
+  assert.equal(reopened.data.contextToken, undefined);
+});
+
 test('switching away and back restores uncertain work only for the original pair', async t => {
   const directory = await mkdtemp(join(tmpdir(), 'wechat-dot-pairs-'));
   t.after(() => rm(directory, { recursive: true, force: true }));

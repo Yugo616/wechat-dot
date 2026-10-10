@@ -16,7 +16,14 @@ export class StateStore {
   data: BridgeState = emptyState();
   private writes: Promise<void> = Promise.resolve();
   constructor(readonly directory: string) {}
-  async connectWeixin(account: WeixinAccount): Promise<void> { await this.connect(s => { s.weixin = account; }); }
+  async connectWeixin(account: WeixinAccount): Promise<void> {
+    await this.connect(s => {
+      if (!s.dot && s.weixin && (s.weixin.userId !== account.userId || s.weixin.botId !== account.botId)) {
+        s.weixinCursor = ''; s.weixinPrimed = false; delete s.contextToken;
+      }
+      s.weixin = account;
+    });
+  }
   async connectDot(profile: DotProfile): Promise<void> {
     await this.connect(s => {
       if (!profile.accountId && s.dot?.accountId && sameDotConnection(s.dot, profile)) profile = { ...profile, accountId: s.dot.accountId };
