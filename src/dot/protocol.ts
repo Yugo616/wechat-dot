@@ -14,10 +14,13 @@ export function normalizeDotMessage(raw: any, dotMembers: Set<string>): DotMessa
     (!m.recipient || m.recipient === 'all')
   ).flatMap((m: any) => (m.content?.parts ?? []).filter((p: unknown) => typeof p === 'string')) : [raw.content?.text ?? ''];
   const source = projected ? raw.attachments : raw.content?.attachments;
-  const attachments: DotAttachment[] = (source ?? []).filter((a: any) => a.type === 'file').map((a: any) => ({
-    id: a.file_id ?? a.file?.id ?? a.attachment_id,
-    name: a.file?.name ?? a.name ?? '附件', mime: a.file?.mime_type ?? a.mime_type ?? 'application/octet-stream'
-  })).filter((a: DotAttachment) => !!a.id);
+  const attachments: DotAttachment[] = (source ?? []).flatMap((a: any): DotAttachment[] => {
+    if (a.type === 'file') return [{ id: a.file_id ?? a.file?.id ?? a.attachment_id,
+      name: a.file?.name ?? a.name ?? '附件', mime: a.file?.mime_type ?? a.mime_type ?? 'application/octet-stream' }];
+    if (a.type === 'media' && a.image_url) return [{ id: a.attachment_id ?? a.image_url,
+      name: a.name ?? '图片', mime: a.mime_type ?? 'application/octet-stream', url: a.image_url }];
+    return [];
+  }).filter((a: DotAttachment) => !!a.id);
   const needsAction = raw.content?.elicitation || source?.some((a: any) => a.type === 'widget');
   let text = parts.join('\n\n').trim();
   if (needsAction && !text) text = 'dot 有一项操作需要你在 ChatGPT 中处理。';

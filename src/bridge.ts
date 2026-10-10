@@ -1,18 +1,26 @@
 import { setTimeout as delay } from 'node:timers/promises';
 import { createHash } from 'node:crypto';
 import type { Config } from './config';
-import type { AppStatus } from './types';
+import type { AppStatus, DotAttachment, InboundJob, LocalFile, WeixinItem } from './types';
 import { StateStore } from './state';
 import { WeixinClient, WeixinExpiredError } from './weixin/client';
 import { DotClient } from './dot/client';
 import { DotAccessError } from './dot/errors';
 import { acceptDot, acceptWeixin, nextInbound, splitText } from './queue';
+import { MediaStore } from './media';
+import { WeixinMedia } from './weixin/media';
+import { silkToWav } from './weixin/voice';
 
 export class Bridge {
   private controller?: AbortController;
   private tasks?: Promise<void>;
   private starting?: Promise<void>;
-  constructor(readonly store: StateStore, readonly weixin: WeixinClient, readonly dot: DotClient, readonly config: Config, readonly status: (patch: Partial<AppStatus>) => void) {}
+  private readonly media: MediaStore;
+  private readonly weixinMedia: WeixinMedia;
+  constructor(readonly store: StateStore, readonly weixin: WeixinClient, readonly dot: DotClient, readonly config: Config, readonly status: (patch: Partial<AppStatus>) => void) {
+    this.media = new MediaStore(store.directory, config.storage);
+    this.weixinMedia = new WeixinMedia(weixin, this.media);
+  }
   async primeWeixin(signal?: AbortSignal): Promise<void> {
     if (this.store.data.weixinPrimed) return;
     let cursor = this.store.data.weixinCursor;
@@ -37,6 +45,11 @@ export class Bridge {
     const controller = this.controller = new AbortController();
     this.starting = (async () => {
       this.status({ detail: '正在同步收取位置…' });
+      const keep = new Set([this.store.data, ...Object.values(this.store.data.savedConnections ?? {})].flatMap(s => [
+        ...s.inbound.filter(j => j.phase !== 'done').flatMap(j => j.prepared?.files.map(f => f.path) ?? []),
+        ...s.outbound.filter(j => j.phase !== 'done').flatMap(j => Object.values(j.media ?? {}).map(m => m.file.path))
+      ]));
+      await this.media.cleanup(keep);
       await this.primeWeixin(controller.signal);
       if (this.store.data.dotCursor === undefined) {
         const baseline = await this.dot.baseline();
@@ -113,27 +126,74 @@ export class Bridge {
         await this.store.update(s => { const j = s.inbound.find(j => j.id === job.id)!; j.phase = 'done'; j.dotMessageId = found; });
         this.status({ needsReview: false, detail: '消息已送到 dot。' }); return;
       }
-      throw new Error('上一条消息的发送结果尚未确认。请打开 ChatGPT 核对，再选择「已收到」或「重试」。');
+      throw new Error(job.lastError ?? '上一条消息的发送结果尚未确认。请打开 ChatGPT 核对，再选择「已收到」或「重试」。');
     }
-    const text = (job.message.item_list ?? []).map(i => i.text_item?.text ?? i.voice_item?.text ?? '').filter(Boolean).join('\n');
-    if (!text) throw new Error('这条消息含有附件，请等媒体功能接入后重试。');
-    const id = await this.dot.send(text, [], async requestId => {
+    const { text, files } = job.prepared ?? await this.prepare(job);
+    if (!text && !files.length) throw new Error('这条消息没有可发送的文字、图片或文件，请重新发送。');
+    const id = await this.dot.send(text, files, async requestId => {
       await this.store.update(s => { s.inbound.find(j => j.id === job.id)!.requestId = requestId; });
     }, async () => {
       await this.store.update(s => { const j = s.inbound.find(j => j.id === job.id)!; j.phase = 'sending'; j.text = text; j.beforeCursor = s.dotCursor; });
+    }, {
+      resume: !!job.composing,
+      begin: () => this.store.update(s => { s.inbound.find(j => j.id === job.id)!.composing = true; }),
+      reset: () => this.store.update(s => { delete s.inbound.find(j => j.id === job.id)!.composing; }),
+      notSubmitted: () => this.store.update(s => { s.inbound.find(j => j.id === job.id)!.phase = 'pending'; })
+    }).catch(async error => {
+      await this.store.update(s => { s.inbound.find(j => j.id === job.id)!.lastError = (error as Error).message; });
+      throw error;
     });
-    await this.store.update(s => { const j = s.inbound.find(j => j.id === job.id)!; j.phase = 'done'; j.dotMessageId = id; });
+    await this.store.update(s => { const j = s.inbound.find(j => j.id === job.id)!; j.phase = 'done'; j.dotMessageId = id; delete j.composing; delete j.lastError; });
     this.status({ detail: '消息已送到 dot，等它回复。', needsReview: false });
+  }
+  private async prepare(job: InboundJob): Promise<{ text: string; files: LocalFile[] }> {
+    const texts: string[] = [], files: LocalFile[] = [];
+    for (const [index, item] of (job.message.item_list ?? []).entries()) {
+      if (item.text_item?.text) texts.push(item.text_item.text);
+      const key = `${this.store.data.weixin?.botId}:${job.id}:${index}`;
+      if (item.image_item || item.file_item) {
+        this.status({ detail: '正在接收微信附件…' });
+        files.push(await this.weixinMedia.download(item, key));
+      }
+      if (item.voice_item) {
+        if (item.voice_item.text?.trim()) texts.push(item.voice_item.text.trim());
+        else {
+          this.status({ detail: '正在识别语音…' });
+          const voice = await this.weixinMedia.download(item, key);
+          const wav = await silkToWav(await this.media.read(voice), this.config.weixin.voiceSampleRate);
+          const file = await this.media.save(key, '语音.wav', wav, 'audio/wav');
+          texts.push(await this.dot.transcribe(file));
+        }
+      }
+    }
+    const prepared = { text: texts.join('\n'), files };
+    await this.store.update(s => { s.inbound.find(j => j.id === job.id)!.prepared = prepared; });
+    return prepared;
   }
   private async deliver(signal: AbortSignal): Promise<void> {
     if (!this.store.data.contextToken) return;
     for (const job of this.store.data.outbound.filter(j => j.phase !== 'done')) {
-      const parts = splitText(job.message.text, this.config.weixin.maxTextLength);
-      if (job.message.attachments.length) throw new Error('dot 回复中含有附件，媒体功能接入后会继续发送。');
+      const parts: Array<{ text?: string; attachment?: DotAttachment }> = [
+        ...splitText(job.message.text, this.config.weixin.maxTextLength).map(text => ({ text })),
+        ...job.message.attachments.map(attachment => ({ attachment }))
+      ];
       for (let i = job.part; i < parts.length; i++) {
         if (signal.aborted) return;
         const clientId = createHash('sha256').update(`${this.store.data.weixin!.botId}:${job.id}:${i}`).digest('hex');
-        await this.weixin.send([{ type: 1, text_item: { text: parts[i] } }], this.store.data.contextToken!, clientId);
+        let item: WeixinItem;
+        if (parts[i].attachment) {
+          this.status({ detail: '正在把 dot 的附件发到微信…' });
+          let cached = this.store.data.outbound.find(j => j.id === job.id)!.media?.[i];
+          if (!cached) {
+            const file = await this.dot.download(parts[i].attachment!, this.media);
+            await this.store.update(s => { (s.outbound.find(j => j.id === job.id)!.media ??= {})[i] = { file }; });
+            cached = { file };
+          }
+          item = cached.item ?? await this.weixinMedia.upload(cached.file);
+          if (!cached.item) await this.store.update(s => { s.outbound.find(j => j.id === job.id)!.media![i].item = item; });
+        } else item = { type: 1, text_item: { text: parts[i].text! } };
+        if (signal.aborted) return;
+        await this.weixin.send([item], this.store.data.contextToken!, clientId);
         await this.store.update(s => { s.outbound.find(j => j.id === job.id)!.part = i + 1; });
       }
       await this.store.update(s => { s.outbound.find(j => j.id === job.id)!.phase = 'done'; });
@@ -142,7 +202,7 @@ export class Bridge {
   }
   async resolveUncertain(retry: boolean): Promise<void> {
     await this.pause();
-    await this.store.update(s => { const job = nextInbound(s); if (job?.phase === 'sending') { job.phase = retry ? 'pending' : 'done'; if (retry) delete job.requestId; } });
+    await this.store.update(s => { const job = nextInbound(s); if (job?.phase === 'sending') { job.phase = retry ? 'pending' : 'done'; delete job.lastError; if (retry) delete job.requestId; } });
     this.status({ needsReview: false });
     await this.start();
   }

@@ -122,24 +122,24 @@ export class DotBrowser extends EventEmitter {
     this.emit('loaded');
     if (show) await this.show(); else await this.hide();
   }
-  command(method: string, params: object = {}, root = false): Promise<any> {
+  command(method: string, params: object = {}, root = false, timeoutMs = this.config.requestTimeoutMs): Promise<any> {
     if (this.embedded) return this.embedded.webContents.debugger.sendCommand(method, params);
     return new Promise((resolve, reject) => {
       if (this.socket?.readyState !== WebSocket.OPEN) { reject(new Error('ChatGPT 浏览器已关闭，请重新登录。')); return; }
       const id = ++this.sequence;
-      const timer = setTimeout(() => { this.pending.delete(id); reject(new Error('ChatGPT 页面响应超时，请打开登录窗口检查。')); }, this.config.requestTimeoutMs);
+      const timer = setTimeout(() => { this.pending.delete(id); reject(new Error('ChatGPT 页面响应超时，请打开登录窗口检查。')); }, timeoutMs);
       this.pending.set(id, { resolve, reject, timer });
       this.socket.send(JSON.stringify({ id, method, params, ...(!root && this.sessionId ? { sessionId: this.sessionId } : {}) }));
     });
   }
-  async evaluate(expression: string): Promise<any> {
+  async evaluate(expression: string, timeoutMs = this.config.requestTimeoutMs): Promise<any> {
     if (this.embedded) return this.embedded.webContents.executeJavaScript(expression);
-    const result = await this.command('Runtime.evaluate', { expression, awaitPromise: true, returnByValue: true, userGesture: true });
+    const result = await this.command('Runtime.evaluate', { expression, awaitPromise: true, returnByValue: true, userGesture: true }, false, timeoutMs);
     if (result.exceptionDetails) throw new Error('ChatGPT 页面未就绪，请先完成登录。');
     return result.result?.value;
   }
   async run(action: string, args: any = {}): Promise<any> {
-    return pageResult(await this.evaluate(`(${dotPageAction.toString()})(${JSON.stringify(action)},${JSON.stringify(args)})`));
+    return pageResult(await this.evaluate(`(${dotPageAction.toString()})(${JSON.stringify(action)},${JSON.stringify(args)})`, this.config.requestTimeoutMs + (args.timeoutMs ?? 0)));
   }
   async navigate(url: string): Promise<void> {
     if (this.embedded) { await this.embedded.loadURL(url); return; }
@@ -153,6 +153,14 @@ export class DotBrowser extends EventEmitter {
   }
   url(): Promise<string> { return this.evaluate('location.href'); }
   async insertText(text: string): Promise<void> { await this.command('Input.insertText', { text }); }
+  async setFiles(paths: string[]): Promise<void> {
+    const { root } = await this.command('DOM.getDocument');
+    for (const selector of this.config.fileInputSelectors) {
+      const { nodeId } = await this.command('DOM.querySelector', { nodeId: root.nodeId, selector });
+      if (nodeId) { await this.command('DOM.setFileInputFiles', { nodeId, files: paths }); return; }
+    }
+    throw new Error('找不到 dot 的附件上传入口，请打开 dot 后重试。');
+  }
   async show(): Promise<void> {
     if (this.embedded) { this.embedded.show(); return; }
     const { windowId } = await this.command('Browser.getWindowForTarget', { targetId: this.targetId }, true);

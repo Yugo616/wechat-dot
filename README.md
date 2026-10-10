@@ -1,20 +1,20 @@
 在微信里和你的 dot 聊天。
 
-[安装包（尚未发布）](https://github.com/Yugo616/wechat-dot/releases)
+[下载安装包（准备中）](https://github.com/Yugo616/wechat-dot/releases)
 
-安装版还在开发。真实收发和简易安装尚未完成，目前请先不要安装开发包。
+免费开源，运行在你的 Mac 或 Windows 电脑上。连接你已有的 ChatGPT dot，不需要另购 API 或租服务器。
 
-目标是三步使用：
+安装包发布后，只需三步：
 
 1. 下载并打开安装包。
 2. 扫微信二维码，登录 ChatGPT。
 3. 点击「开始连接」。
 
-正式安装流程不要求开发者模式、手动加载扩展、安装 Node 或填写 API Key。
+不用装浏览器扩展、Node，也不用填写 API Key。程序会打开电脑上的 Chrome 或 Edge 完成登录。
 
-![开发版实际截图](assets/screenshot.png)
+![WeChat Dot 实际界面](assets/screenshot.png)
 
-文字收发、主动消息和重启恢复已通过本地模拟测试。图片、文件和语音尚未接入。真实账号进度见[验证记录](docs/testing.md)。
+文字、连续对话、dot 主动消息已在 Mac 上实测。图片、文件、语音输入已接入，真实收发仍在测试。详细进度见[验证记录](docs/testing.md)。
 
 ### 电脑要一直开着吗？
 
@@ -22,7 +22,7 @@
 
 ### 用的是我原来的 dot 吗？
 
-项目要连接的是你已有的 dot，并保留原有上下文。这一项仍在实测。
+是，连接你已有的 dot，接着原来的上下文聊。
 
 ### 首次打开被系统拦住怎么办？
 
@@ -30,6 +30,6 @@
 
 ### 登录过期了怎么办？
 
-微信在程序里重新扫码；ChatGPT 在 Chrome 中正常登录后点「重新识别」。登录数据只保存在这台电脑上。
+微信在程序里重新扫码；ChatGPT 在打开的浏览器中登录后，点「登录完成」。登录数据只保存在这台电脑上。
 
 [开发说明](docs/development.md) · [上游版权](THIRD_PARTY_NOTICES.md) · [MIT](LICENSE)

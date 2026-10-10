@@ -183,7 +183,7 @@ async function run(): Promise<void> {
       const newer = Array.isArray(releases) && releases.find(r => !r.draft && valid(r.tag_name) && gt(r.tag_name, app.getVersion()));
       if (newer) publish({ updateUrl: config.updates.releaseUrl });
     }).catch(() => {});
-  if (store.data.dot) {
+  if (store.data.dot && store.data.enabled) {
     publish({ dot: 'waiting', dotDetail: '正在恢复 ChatGPT 登录…' });
     try { await dot.open(false); }
     catch (e) { publish({ dot: 'error', dotDetail: (e as Error).message }); show(); }

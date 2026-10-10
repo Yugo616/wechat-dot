@@ -19,6 +19,14 @@ test('projected reply excludes analysis, hidden parts and incomplete generations
   assert.equal(result?.text, 'answer'); assert.equal(result?.complete, true);
 });
 
+test('generated image URLs remain attached and wait for generation to finish', () => {
+  const raw = { id: 'image-message', raw_messages: [], attachments: [{ type: 'media', attachment_id: 'image-1', image_url: 'https://example.test/image.png', generating: true }] };
+  const pending = normalizeDotMessage(raw, new Set());
+  assert.equal(pending?.complete, false);
+  assert.equal(pending?.attachments[0]?.url, raw.attachments[0].image_url);
+  assert.equal(normalizeDotMessage({ ...raw, attachments: [{ ...raw.attachments[0], generating: false }] }, new Set())?.complete, true);
+});
+
 test('history drains every page after the cursor instead of dropping burst messages', async () => {
   const pages: Record<string, any> = { start: { items: [{ id: '1' }, { id: '2' }], next_cursor: '2' }, '2': { items: [{ id: '3' }], next_cursor: null } };
   const items = await collectNewMessages('start', 2, async after => pages[after]);

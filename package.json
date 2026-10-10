@@ -1,6 +1,6 @@
 {
   "name": "wechat-dot",
-  "version": "0.1.0-alpha.3",
+  "version": "0.1.0-alpha.4",
   "description": "在微信里和你的 dot 聊天。",
   "private": true,
   "license": "MIT",
@@ -48,6 +48,7 @@
     },
     "files": [
       "dist/**",
+      "!dist/extension/**",
       "config/defaults.json",
       "assets/**",
       "LICENSE",
@@ -72,12 +73,6 @@
       "oneClick": true,
       "perMachine": false,
       "deleteAppDataOnUninstall": false
-    },
-    "extraResources": [
-      {
-        "from": "dist/extension",
-        "to": "chrome-extension"
-      }
-    ]
+    }
   }
 }

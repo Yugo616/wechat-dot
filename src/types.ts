@@ -6,19 +6,19 @@ export interface DotMessage { id: string; text: string; createdAt: string; compl
 export interface WeixinItem {
   type?: number;
   text_item?: { text?: string };
-  image_item?: { media?: CdnMedia; aeskey?: string };
-  file_item?: { media?: CdnMedia; file_name?: string };
+  image_item?: { media?: CdnMedia; aeskey?: string; mid_size?: number };
+  file_item?: { media?: CdnMedia; file_name?: string; len?: string };
   voice_item?: { media?: CdnMedia; text?: string; sample_rate?: number; encode_type?: number };
   ref_msg?: { title?: string; svr_id?: string; message_item?: WeixinItem };
 }
-export interface CdnMedia { encrypt_query_param?: string; aes_key?: string; full_url?: string }
+export interface CdnMedia { encrypt_query_param?: string; aes_key?: string; full_url?: string; encrypt_type?: number }
 export interface WeixinMessage {
   message_id?: string; from_user_id?: string; to_user_id?: string;
   message_type?: number; message_state?: number; create_time_ms?: number;
   item_list?: WeixinItem[]; context_token?: string;
 }
-export interface InboundJob { id: string; message: WeixinMessage; phase: 'pending' | 'sending' | 'done'; requestId?: string; text?: string; dotMessageId?: string; beforeCursor?: string }
-export interface OutboundJob { id: string; message: DotMessage; part: number; phase: 'pending' | 'sending' | 'done' }
+export interface InboundJob { id: string; message: WeixinMessage; phase: 'pending' | 'sending' | 'done'; composing?: boolean; lastError?: string; requestId?: string; text?: string; dotMessageId?: string; beforeCursor?: string; prepared?: { text: string; files: LocalFile[] } }
+export interface OutboundJob { id: string; message: DotMessage; part: number; phase: 'pending' | 'sending' | 'done'; media?: Record<number, { file: LocalFile; item?: WeixinItem }> }
 export interface BridgeState {
   version: 1; weixin?: WeixinAccount; dot?: DotProfile;
   weixinCursor: string; weixinPrimed?: boolean; dotCursor?: string; dotPending?: string[]; contextToken?: string;

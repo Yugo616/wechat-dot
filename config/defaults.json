@@ -9,10 +9,11 @@
     "requestTimeoutMs": 20000,
     "longPollTimeoutMs": 40000,
     "retryDelayMs": 3000,
-    "maxTextLength": 2000
+    "maxTextLength": 2000,
+    "voiceSampleRate": 24000
   },
   "dot": {
-    "browser": "extension",
+    "browser": "external",
     "extension": {"port":43127,"heartbeatMs":20000,"maxPayloadBytes":8388608,"publicKey":"MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA1abP+ZnVxS4s/RLU7kw4Gg0ujfV82oE0aZWyFhQxcJ2cQ63H6HWuvyjLpLQml9khQNYOPN08x+hi6GTpchtwS3omvIwhc1qVLd1IfUNIMujKHDTzvUXzZaXyz5A+Sgp9ljrmsB+Eon7+EVPl5aXIaPDxf/VxM9k5IFO5rLASko7/wshdopQLEz6mRIvKVFJWok3zJ2o8HuEHR00h0FC/81iSySHicEm9lbcbTHtDuU95CiGj++VLP1UC1qMyrtrV75hjkcCUtFkTOIXty2ZhJvkpmH3Md4QWoR5VDkrPp6jriuS5Vl+vdT+GoratKBOejbvJ4AmawFQemp+OieZEMwIDAQAB"},
     "browserProbeTimeoutMs": 1000,
     "backgroundArguments": ["--disable-background-timer-throttling", "--disable-backgrounding-occluded-windows", "--disable-renderer-backgrounding"],
@@ -25,19 +26,22 @@
     "apiPrefixes": ["/backend-api", "/__codex-api"],
     "primaryPath": "/tbo/primary",
     "profilePath": "/tbo/by-thread/{threadId}",
-    "conversationPath": "/dots/{threadId}",
+    "conversationPath": "/dots/home",
     "sessionPath": "/api/auth/session",
     "roomPath": "/messaging/rooms/{roomId}",
     "messagesPath": "/messaging/rooms/{roomId}/messages",
     "filesPath": "/messaging/rooms/{roomId}/files/{fileId}",
     "transcribePath": "/transcribe",
     "pollIntervalMs": 5000,
+    "composerPollIntervalMs": 100,
     "requestTimeoutMs": 30000,
     "sendTimeoutMs": 60000,
-    "historyPageSize": 50,
+    "uploadTimeoutMs": 120000,
+    "historyPageSize": 20,
     "composerSelectors": ["#prompt-textarea", "[contenteditable='true'][role='textbox']", "textarea"],
+    "fileInputSelectors": ["input[type='file'][multiple]", "input[type='file']"],
     "draftAttachmentSelectors": ["input[type='file']", "[data-testid*='attachment']", "img[src^='blob:']", "button[aria-label*='Remove']", "button[aria-label*='移除']", "button[aria-label*='删除']", "button[aria-label*='取消上传']"],
-    "sendSelectors": ["[data-testid='send-button']", "button[aria-label='Send message']", "button[aria-label='发送消息']", "button[aria-label='Send']", "button[aria-label='发送']"]
+    "sendSelectors": ["[data-testid='send-button']", "button[aria-label='Send message']", "button[aria-label='发送消息']", "button[aria-label='Send']", "button[aria-label='发送']", "button[aria-label='傳送']"]
   },
   "storage": { "maxMediaBytes": 26214400, "mediaRetentionHours": 24, "completedHistoryLimit": 2000 },
   "updates": { "releaseUrl": "https://github.com/Yugo616/wechat-dot/releases", "apiUrl": "https://api.github.com/repos/Yugo616/wechat-dot/releases", "timeoutMs": 5000 }
