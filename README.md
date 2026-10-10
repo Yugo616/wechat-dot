@@ -12,9 +12,9 @@
 2. 扫微信二维码，登录 ChatGPT。
 3. 点击「开始连接」。
 
-不用装浏览器扩展、Node，也不用填写 API Key。程序会打开电脑上的 Chrome 或 Edge 完成登录。
+电脑需已安装 Chrome 或 Edge，能正常打开 ChatGPT，账号中已有可用的 dot。不用装浏览器扩展、Node，也不用填写 API Key。
 
-![WeChat Dot 实际界面](https://github.com/user-attachments/assets/9d3ed3ff-f0fc-4637-a6db-4f408cb07418)
+![WeChat Dot 实际界面](https://github.com/user-attachments/assets/a5f79a52-c400-4f8a-9c9d-2d0629c58e60)
 
 文字、连续对话、dot 主动消息已在 Mac 上实测。图片、文件、语音输入已接入，真实收发仍在测试。详细进度见[验证记录](docs/testing.md)。
 
