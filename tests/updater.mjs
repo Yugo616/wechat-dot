@@ -110,6 +110,10 @@ try {
     try { return JSON.parse(extractFile(join(resources, 'app.asar'), 'package.json').toString()).version === pkg.version; } catch { return false; }
   }, 'Installed app did not become the new version', 90000);
   if (mac) await waitFor(async () => !(await readdir(apps)).some(n => n.startsWith('.wechat-dot-update-')), 'New app did not start and acknowledge update cleanup');
+  else await waitFor(async () => {
+    const result = await exec('powershell.exe', ['-NoProfile', '-Command', 'Get-CimInstance Win32_Process | Where-Object { $_.ExecutablePath -eq $env:WECHAT_DOT_FIXTURE_EXE } | ForEach-Object { $p = Get-Process -Id $_.ProcessId -ErrorAction SilentlyContinue; if ($p.MainWindowTitle) { $p.Id } }'], { env: { ...process.env, WECHAT_DOT_FIXTURE_EXE: await realpath(executable) } });
+    return Boolean(result.stdout.trim());
+  }, 'Updated Windows app did not open its window');
   assert.deepEqual(JSON.parse(await readFile(join(data, 'state.json'), 'utf8')), initial);
   console.log('PASS: update installed, restarted, and preserved paused state, saved cursor, pending message and exit preference.');
 } catch (error) {
@@ -124,11 +128,16 @@ try {
   if (desktop) await desktop.close().catch(() => {});
   if (mac) {
     const processes = await exec('/bin/ps', ['-axo', 'pid=,command=']);
+    const owned = [], canonical = await realpath(executable);
     for (const line of processes.stdout.split('\n')) {
       const match = /^\s*(\d+)\s+(.*)/.exec(line);
-      if (match && match[2].startsWith(await realpath(executable))) { try { process.kill(Number(match[1]), 'SIGTERM'); } catch {} }
+      if (match && match[2].startsWith(canonical)) {
+        owned.push(Number(match[1]));
+        try { process.kill(Number(match[1]), 'SIGTERM'); } catch {}
+      }
     }
-  } else await exec('powershell.exe', ['-NoProfile', '-Command', 'Get-CimInstance Win32_Process | Where-Object { $_.ExecutablePath -eq $env:WECHAT_DOT_FIXTURE_EXE } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force }'], { env: { ...process.env, WECHAT_DOT_FIXTURE_EXE: executable } }).catch(() => {});
+    await waitFor(() => owned.every(pid => { try { process.kill(pid, 0); return false; } catch { return true; } }), 'Fixture app did not finish quitting');
+  } else await exec('powershell.exe', ['-NoProfile', '-Command', 'Get-CimInstance Win32_Process | Where-Object { $_.ExecutablePath -eq $env:WECHAT_DOT_FIXTURE_EXE } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue; Wait-Process -Id $_.ProcessId -Timeout 10 -ErrorAction SilentlyContinue }'], { env: { ...process.env, WECHAT_DOT_FIXTURE_EXE: await realpath(executable) } });
   if (server) { server.closeAllConnections(); server.close(); }
-  await rm(root, { recursive: true, force: true }); await rm(cache, { recursive: true, force: true });
+  await rm(root, { recursive: true, force: true, maxRetries: 3 }); await rm(cache, { recursive: true, force: true, maxRetries: 3 });
 }

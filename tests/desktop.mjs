@@ -295,6 +295,7 @@ try {
   await waitFor(() => sent.length === 3, 'Proactive message did not deliver');
   assert.equal(sent[2].item_list[0].text_item.text, '主动问候');
   if (externalBrowser) {
+    await waitFor(async () => JSON.parse(await readFile(join(data, 'state.json'), 'utf8')).outbound.find(job => job.id === 'proactive')?.phase === 'done', 'Proactive delivery was not saved before the crash test');
     browserPort = (await readFile(join(data, 'ChatGPT Browser', 'DevToolsActivePort'), 'utf8')).split('\n')[0];
     const exited = once(desktop.process(), 'exit');
     await desktop.evaluate(({ app }) => { setTimeout(() => app.exit(0), 0); });
