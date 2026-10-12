@@ -144,7 +144,15 @@ export class DotBrowser extends EventEmitter {
     throw new Error('ChatGPT 页面启动超时，请重新登录。');
   }
   command(method: string, params: object = {}, root = false, timeoutMs = this.config.requestTimeoutMs): Promise<any> {
-    if (this.embedded) return this.embedded.webContents.debugger.sendCommand(method, params);
+    if (this.embedded) {
+      const window = this.embedded;
+      return new Promise((resolve, reject) => {
+        const closed = () => reject(new Error('ChatGPT 浏览器已断开，正在恢复。'));
+        window.once('closed', closed);
+        window.webContents.debugger.sendCommand(method, params).then(resolve, reject)
+          .finally(() => window.removeListener('closed', closed));
+      });
+    }
     return new Promise((resolve, reject) => {
       if (this.socket?.readyState !== WebSocket.OPEN) { reject(new Error('ChatGPT 浏览器已断开，正在恢复。')); return; }
       const id = ++this.sequence;

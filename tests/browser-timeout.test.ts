@@ -1,7 +1,21 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { EventEmitter } from 'node:events';
 import defaults from '../config/defaults.json';
 import { DotBrowser } from '../src/dot/browser';
+
+test('closing an embedded page settles a pending command so reconnect can drain the old loop', async () => {
+  const browser = new DotBrowser(defaults.dot);
+  const window = Object.assign(new EventEmitter(), { webContents: { debugger: { sendCommand: () => new Promise(() => {}) } } });
+  (browser as any).embedded = window;
+  const pending = browser.command('Runtime.evaluate');
+  window.emit('closed');
+  let timer: ReturnType<typeof setTimeout>;
+  try {
+    await assert.rejects(Promise.race([pending, new Promise((_, reject) => { timer = setTimeout(() => reject(Error('command still pending')), 50); })]), /浏览器已断开/);
+    assert.equal(window.listenerCount('closed'), 0);
+  } finally { clearTimeout(timer!); }
+});
 
 test('a slow page request keeps its own timeout while ordinary browser commands remain bounded', async () => {
   const browser = new DotBrowser({ ...defaults.dot, requestTimeoutMs: 20 });
