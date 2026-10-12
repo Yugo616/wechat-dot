@@ -176,6 +176,22 @@ async function closeManagedBrowser(targetOnly = false) {
 }
 try {
   desktop = await launchDesktop();
+  if (externalBrowser) await desktop.evaluate(async (_, executable) => {
+    const cp = await import('node:child_process');
+    const original = cp.default.spawn;
+    globalThis.fixtureBrowserEvents = [];
+    cp.default.spawn = function (command, args, options) {
+      if (command !== executable) return original.call(this, command, args, options);
+      const child = original.call(this, command, [...args, '--enable-logging=stderr'], { ...options, stdio: ['ignore', 'ignore', 'pipe'] });
+      const events = globalThis.fixtureBrowserEvents;
+      events.push({ event: 'spawn', pid: child.pid, args });
+      child.on('error', error => events.push({ event: 'error', message: error.message }));
+      child.on('exit', (code, signal) => events.push({ event: 'exit', code, signal }));
+      child.stderr.on('data', bytes => { events.push({ event: 'stderr', text: bytes.toString().slice(-3000) }); if (events.length > 40) events.splice(1, 1); });
+      return child;
+    };
+    (await import('node:module')).syncBuiltinESMExports();
+  }, dotConfig.browserExecutables[process.platform][0]);
   const page = await desktop.firstWindow();
   await page.getByRole('heading', { name: 'WeChat Dot', exact: true }).waitFor();
   await page.evaluate(() => {
@@ -446,6 +462,7 @@ try {
     }
   }
   if (desktop) {
+    console.log('FIXTURE BROWSER EVENTS', await desktop.evaluate(() => globalThis.fixtureBrowserEvents).catch(() => []));
     for (const p of desktop.windows()) console.log('FIXTURE WINDOW', p.url());
     console.log('FIXTURE STATUS', await (await desktop.firstWindow()).evaluate(() => window.wechatDot.status()).catch(() => 'App exited'));
     console.log('FIXTURE STATUS CHANGES', await (await desktop.firstWindow()).evaluate(() => window.fixtureStatusChanges).catch(() => []));
