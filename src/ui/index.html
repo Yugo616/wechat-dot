@@ -13,7 +13,7 @@
   <section class="accounts" aria-label="连接账号">
     <div class="account">
       <div class="account-row">
-        <div class="account-info"><div class="account-title"><h2>微信</h2><span class="badge" id="weixin-badge">未连接</span></div><p id="weixin-detail">用手机微信扫码</p></div>
+        <div class="account-info"><div class="account-title"><h2>微信</h2><span class="badge" id="weixin-badge">未绑定</span></div><p id="weixin-detail">用手机微信扫码</p></div>
         <button id="weixin-button" data-action="weixin">微信扫码</button>
       </div>
       <div id="qr-area" hidden><img id="qr" alt="微信登录二维码"></div>
@@ -21,24 +21,24 @@
     </div>
     <div class="account">
       <div class="account-row">
-        <div class="account-info"><div class="account-title"><h2>dot</h2><span class="badge" id="dot-badge">未连接</span></div><p id="dot-detail">在浏览器中登录 ChatGPT</p></div>
+        <div class="account-info"><div class="account-title"><h2>ChatGPT dot</h2><span class="badge" id="dot-badge">未绑定</span></div><p id="dot-detail">在浏览器中登录 ChatGPT</p></div>
         <button id="dot-button" data-action="dot">登录 ChatGPT</button>
       </div>
       <div class="account-extra" id="finish-login" hidden><button data-action="finish-login">登录完成，识别 dot</button></div>
       <div class="account-extra" id="extension-area" hidden><button class="link" data-action="extension">安装 Chrome 扩展</button></div>
-      <div class="account-extra" id="dot-actions" hidden><button class="link" data-action="show-dot">打开 dot</button><button class="link" data-action="discover">重新识别</button></div>
+      <div class="account-extra" id="dot-actions" hidden><button class="link" data-action="show-dot">打开 dot</button><button class="link" id="recheck" data-action="discover">重新检查</button></div>
     </div>
   </section>
   <section class="connection-status" aria-live="polite">
-    <div class="status-line"><span id="status-dot" aria-hidden="true"></span><strong id="running">未连接</strong></div>
-    <p id="detail">先连接微信和 ChatGPT。</p>
+    <div class="status-line"><span id="status-dot" aria-hidden="true"></span><strong id="running">转发已暂停</strong></div>
+    <p id="detail">先扫码绑定微信，再登录 ChatGPT。</p>
   </section>
   <div id="review" hidden>
     <p>请先核对 ChatGPT 中的上一条消息。</p>
     <div class="review-actions"><button data-action="show-dot">打开 ChatGPT</button><button data-action="received">已收到，继续</button><button data-action="retry">未收到，重试</button></div>
   </div>
-  <button class="primary" id="toggle" data-action="start" disabled>开始连接</button>
-  <p class="background-note">连接后自动收起，电脑在线即可。<br>可在菜单栏或托盘中暂停、重新登录和退出。</p>
+  <button class="primary" id="toggle" data-action="start" disabled>开始转发</button>
+  <p class="background-note">开始后自动收起，电脑需保持开机、联网。<br>关闭窗口后仍在菜单栏或托盘运行。</p>
   <footer><button class="link" data-action="download" id="download">下载与更新</button><button class="link" data-action="quit">退出</button></footer>
 </main>
 <script src="ui.js"></script>

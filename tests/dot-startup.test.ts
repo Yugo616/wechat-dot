@@ -2,7 +2,12 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
 import { setImmediate } from 'node:timers/promises';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { DotClient } from '../src/dot/client';
+import { StateStore } from '../src/state';
+import { acceptDot } from '../src/queue';
 import defaults from '../config/defaults.json';
 
 function setup() {
@@ -84,4 +89,43 @@ test('a failed browser open can be retried', async () => {
   fixture.release();
   await fixture.client.open(false);
   assert.equal((await fixture.client.discover()).roomId, 'room');
+});
+
+test('a disconnected browser clears the live session and notifies its owner', async () => {
+  const fixture = setup();
+  fixture.release();
+  await fixture.client.discover();
+  let disconnected = 0;
+  fixture.client.on('closed', () => { disconnected++; });
+  fixture.browser.emit('closed');
+  assert.equal(fixture.client.profile, undefined, 'A closed browser is not a live dot session');
+  assert.equal(fixture.client.window, undefined);
+  assert.equal(disconnected, 1);
+  assert.equal((await fixture.client.discover()).roomId, 'room');
+  assert.equal(fixture.counts().opens, 2, 'The saved login can be reopened');
+});
+
+test('intentional disposal does not request automatic recovery', async () => {
+  const fixture = setup();
+  fixture.release();
+  await fixture.client.discover();
+  let disconnected = 0;
+  fixture.client.on('closed', () => { disconnected++; });
+  await fixture.client.dispose();
+  fixture.browser.emit('closed');
+  assert.equal(disconnected, 0);
+  assert.equal(fixture.client.profile, undefined);
+});
+
+test('disconnecting preserves a reply already waiting to be saved', async t => {
+  const directory = await mkdtemp(join(tmpdir(), 'wechat-dot-disconnect-'));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const store = new StateStore(directory); await store.load();
+  const fixture = setup(); fixture.release(); await fixture.client.discover();
+  fixture.client.members.add('dot-member');
+  const saving = acceptDot(store, [{ id: 'fresh-reply', account_user_id: 'dot-member', content: { text: '保留这条回复' } }], fixture.client.members);
+  fixture.browser.emit('closed');
+  await saving;
+  assert.equal(store.data.outbound[0]?.message.text, '保留这条回复');
+  assert.equal(store.data.dotCursor, 'fresh-reply');
 });

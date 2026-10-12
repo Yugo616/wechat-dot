@@ -34,3 +34,15 @@ test('browser startup reports a timeout if only another page is present', async 
   browser.command = async () => ({ targetInfos: [{ type: 'page', targetId: 'other', url: 'https://another.test/' }] });
   await assert.rejects((browser as any).pageTarget(), /页面启动超时/);
 });
+
+test('reusing a browser restores its closed conversation page', async () => {
+  const browser = new DotBrowser({ ...defaults.dot, homeUrl: 'https://fixture.test/', requestTimeoutMs: 10, composerPollIntervalMs: 1 });
+  browser.command = async (method, params) => {
+    if (method === 'Target.createTarget') {
+      assert.deepEqual(params, { url: 'https://fixture.test/' });
+      return { targetId: 'restored' };
+    }
+    return { targetInfos: [{ type: 'page', targetId: 'other', url: 'about:blank' }] };
+  };
+  assert.equal(await (browser as any).pageTarget(true), 'restored');
+});

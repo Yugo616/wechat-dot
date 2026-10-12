@@ -46,6 +46,17 @@ test('access denied during startup disables automatic resume and preserves queue
   await bridge.pause();
 });
 
+test('resolving a checked message leaves restart to the common login-check flow', async t => {
+  const path = await mkdtemp(join(tmpdir(), 'wechat-dot-resolve-'));
+  t.after(() => rm(path, { recursive: true, force: true }));
+  const store = new StateStore(path); await store.load();
+  await store.update(s => { s.inbound = [{ id: 'uncertain', phase: 'sending', message: {}, lastError: 'connection lost' }]; });
+  const bridge = new Bridge(store, {} as any, {} as any, defaults, () => {});
+  await bridge.resolveUncertain(false);
+  assert.equal(store.data.inbound[0].phase, 'done');
+  assert.equal(store.data.enabled, false);
+});
+
 for (const failAt of ['upload', 'send']) test(`restart retains downloaded attachments after ${failAt} failure and source expiry`, async t => {
   const path = await mkdtemp(join(tmpdir(), 'wechat-dot-outbound-')); t.after(() => rm(path, { recursive: true, force: true }));
   const store = new StateStore(path); await store.load();

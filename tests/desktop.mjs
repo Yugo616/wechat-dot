@@ -15,6 +15,9 @@ let draftPolls = 0, lastDraftPoll;
 let deniedStatus = 0, dotRequests = 0;
 let signedIn = true;
 let breakSession = false;
+let sessionRequests = 0;
+let sessionGate;
+let weixinSendGate, sendRequests = 0;
 const requests = [];
 const mediaKey = Buffer.from('00112233445566778899aabbccddeeff', 'hex');
 const picture = Buffer.from('89504e470d0a1a0aff0080abcd', 'hex');
@@ -45,6 +48,7 @@ const server = createServer(async (req, res) => {
   if (url.pathname === '/ilink/bot/get_qrcode_status') return res.end(JSON.stringify({ status: 'confirmed', bot_token: 'fixture-weixin', ilink_bot_id: 'fixture-bot', ilink_user_id: 'fixture-owner', baseurl: base }));
   if (url.pathname === '/ilink/bot/getupdates') { const msgs = incoming.splice(0); return res.end(JSON.stringify({ ret: 0, msgs, get_updates_buf: 'cursor' })); }
   if (url.pathname === '/ilink/bot/sendmessage') {
+    sendRequests++; await weixinSendGate;
     const message = JSON.parse(body).msg;
     if (rejectWeixinSend) { rejectedSends++; return res.end('{"ret":-2,"errmsg":"prepare failed"}'); }
     if (message.item_list[0].type === 4 && !failedMediaClientId) { failedMediaClientId = message.client_id; res.statusCode = 503; return res.end(); }
@@ -88,6 +92,8 @@ const server = createServer(async (req, res) => {
   }
   if (url.pathname === '/fixture/draft') { draftPolls++; lastDraftPoll = { at: new Date().toISOString(), attachment: draftAttachment }; return res.end(JSON.stringify({attachment:draftAttachment})); }
   if (url.pathname === '/api/auth/session') {
+    sessionRequests++;
+    await sessionGate;
     if (breakSession) return res.destroy();
     return res.end(JSON.stringify(signedIn ? { accessToken: 'fixture-chatgpt', user: { id: 'fixture-user' } } : {}));
   }
@@ -148,6 +154,26 @@ async function reopenSetup() {
   await desktop.evaluate(({ app }) => { app.emit('second-instance', {}, [], process.cwd()); });
   await waitFor(setupVisible, 'A second launch did not reopen connection settings');
 }
+async function closeManagedBrowser(targetOnly = false) {
+  if (externalBrowser) {
+    browserPort = (await readFile(join(data, 'ChatGPT Browser', 'DevToolsActivePort'), 'utf8')).split('\n')[0];
+    const browser = await chromium.connectOverCDP(`http://127.0.0.1:${browserPort}`);
+    if (targetOnly) {
+      const context = browser.contexts()[0];
+      const target = context.pages().find(p => p.url().startsWith(base));
+      await context.newPage();
+      await target.close();
+    } else {
+      const session = await browser.newBrowserCDPSession();
+      await session.send('Browser.close').catch(() => {});
+    }
+    await browser.close();
+  } else {
+    await desktop.evaluate(({ BrowserWindow }, origin) => {
+      BrowserWindow.getAllWindows().find(w => w.webContents.getURL().startsWith(origin)).destroy();
+    }, base);
+  }
+}
 try {
   desktop = await launchDesktop();
   const page = await desktop.firstWindow();
@@ -187,8 +213,15 @@ try {
     documentId = await managedPage.evaluate(() => { history.pushState({}, '', '/dots/home'); return window.fixtureDocumentId = crypto.randomUUID(); });
   }
   if (externalBrowser) browserPort = (await readFile(join(data, 'ChatGPT Browser', 'DevToolsActivePort'), 'utf8')).split('\n')[0];
-  await page.getByRole('button', { name: /开始连接/ }).click();
-  await page.getByRole('button', { name: '暂停连接' }).waitFor();
+  if (!extensionContext) {
+    await closeManagedBrowser();
+    await new Promise(r => setTimeout(r, 300));
+    assert.equal((await page.evaluate(() => window.wechatDot.status())).running, false);
+  }
+  const beforeStartCheck = sessionRequests;
+  await page.getByRole('button', { name: /开始转发/ }).click();
+  await page.getByRole('button', { name: '暂停转发' }).waitFor();
+  await waitFor(() => sessionRequests > beforeStartCheck, 'Start must check the saved login before forwarding', 3000);
   await waitFor(async () => !(await setupVisible()), 'Connected setup did not move to the tray');
   await reopenSetup();
   await desktop.evaluate(({ BrowserWindow }) => { BrowserWindow.getAllWindows().find(w => w.webContents.getURL().endsWith('/index.html')).close(); });
@@ -208,14 +241,22 @@ try {
   incoming.push({ message_id: 'wx-1', from_user_id: 'fixture-owner', message_type: 1, message_state: 2, context_token: 'reply-context', item_list: [{ type: 1, text_item: { text: '你好 dot' } }] });
   await new Promise(r => setTimeout(r, 500));
   assert.equal(nativeSends.length, 1);
+  if (!extensionContext) {
+    const beforeRecoveryCheck = sessionRequests;
+    await closeManagedBrowser(externalBrowser);
+    await waitFor(async () => sessionRequests > beforeRecoveryCheck && (await page.evaluate(() => window.wechatDot.status())).running, 'A closed browser must recover its login and resume forwarding', 30000);
+    await new Promise(r => setTimeout(r, 300));
+    assert.equal(sent.length, 1, 'Browser recovery must not resend replies');
+    assert.equal(nativeSends.length, 1, 'Browser recovery must not repeat questions');
+  }
   incoming.push({ message_id: 'wx-2', from_user_id: 'fixture-owner', message_type: 1, message_state: 2, context_token: 'reply-context', item_list: [{ type: 1, text_item: { text: '接着聊' } }] });
-  await waitFor(() => sent.length === 2, 'A session without account.id failed on the second message');
+  await waitFor(() => sent.length === 2, 'A session without account.id failed on the second message after browser recovery');
   assert.equal(nativeSends.length, 2);
   assert.equal(sent[1].item_list[0].text_item.text, '收到：接着聊');
   await desktop.close(); desktop = undefined;
   desktop = await launchDesktop();
   const restarted = await desktop.firstWindow();
-  await restarted.getByRole('button', { name: '暂停连接' }).waitFor({ timeout: extensionContext ? 90000 : 30000 });
+  await restarted.getByRole('button', { name: '暂停转发' }).waitFor({ timeout: extensionContext ? 90000 : 30000 });
   assert.equal(await setupVisible(), false, 'Restoring a connection should not open settings');
   await new Promise(r => setTimeout(r, 500));
   assert.equal(sent.length, 2);
@@ -229,7 +270,7 @@ try {
     await exited;
     desktop = undefined;
     desktop = await launchDesktop();
-    await (await desktop.firstWindow()).getByRole('button', { name: '暂停连接' }).waitFor({ timeout: 45000 });
+    await (await desktop.firstWindow()).getByRole('button', { name: '暂停转发' }).waitFor({ timeout: 45000 });
     messages.push({ id: 'after-crash', account_user_id: 'dot-member', content: { text: '意外退出后继续' } });
     await waitFor(() => sent.length === 4, 'A surviving browser could not be reconnected after a crash');
     assert.equal(sent[3].item_list[0].text_item.text, '意外退出后继续');
@@ -263,9 +304,9 @@ try {
   await waitFor(async () => (await recoverySettings.evaluate(() => window.wechatDot.status())).weixinSendError, 'A rejected reply must show its recovery action');
   await reopenSetup();
   assert.match(await recoverySettings.locator('#detail').innerText(), /微信.*发一句话/);
-  await recoverySettings.getByRole('button', { name: '暂停连接', exact: true }).click();
-  assert.equal(await recoverySettings.getByRole('button', { name: '开始连接', exact: true }).isEnabled(), true, 'Pausing a send wait must not lock the receiver');
-  await recoverySettings.getByRole('button', { name: '开始连接', exact: true }).click();
+  await recoverySettings.getByRole('button', { name: '暂停转发', exact: true }).click();
+  assert.equal(await recoverySettings.getByRole('button', { name: '开始转发', exact: true }).isEnabled(), true, 'Pausing a send wait must not lock the receiver');
+  await recoverySettings.getByRole('button', { name: '开始转发', exact: true }).click();
   await waitFor(async () => (await recoverySettings.evaluate(() => window.wechatDot.status())).running, 'Receiver did not restart while waiting to send');
   await desktop.close(); desktop = undefined;
   const saved = JSON.parse(await readFile(join(data, 'state.json'), 'utf8'));
@@ -273,7 +314,7 @@ try {
   await writeFile(join(data, 'state.json'), JSON.stringify(saved));
   legacyDraft = true;
   desktop = await launchDesktop(); recoverySettings = await desktop.firstWindow();
-  await recoverySettings.getByRole('button', { name: '暂停连接' }).waitFor({ timeout: extensionContext ? 90000 : 30000 });
+  await recoverySettings.getByRole('button', { name: '暂停转发' }).waitFor({ timeout: extensionContext ? 90000 : 30000 });
   await waitFor(() => nativeSends.some(m => m.content.text === legacyText), 'An owned draft left by old multiline insertion must resume', 15000);
   legacyDraft = false;
   assert.ok((await recoverySettings.evaluate(() => window.wechatDot.status())).weixinSendError, 'Restart must keep the recovery notice');
@@ -290,10 +331,24 @@ try {
   assert.equal((await recoverySettings.evaluate(() => window.wechatDot.status())).weixinSendError, undefined);
   console.log('PASS: rejected WeChat reply waits through pause/restart, then fresh activity resumes delivery and a multiline question.');
   await reopenSetup();
-  await (await desktop.firstWindow()).getByRole('button', { name: '暂停连接', exact: true }).click();
-  await (await desktop.firstWindow()).getByRole('button', { name: '开始连接', exact: true }).waitFor();
+  await (await desktop.firstWindow()).getByRole('button', { name: '暂停转发', exact: true }).click();
+  await (await desktop.firstWindow()).getByRole('button', { name: '开始转发', exact: true }).waitFor();
   assert.equal(await setupVisible(), true, 'Pausing should keep the settings open');
   const settings = await desktop.firstWindow();
+  let releaseSession;
+  sessionGate = new Promise(resolve => { releaseSession = resolve; });
+  const beforeCancelledCheck = sessionRequests;
+  const checking = settings.evaluate(() => window.wechatDot.action('start'));
+  await waitFor(() => sessionRequests > beforeCancelledCheck, 'Start should check login before any send');
+  assert.equal(await settings.getByRole('button', { name: '暂停转发', exact: true }).isEnabled(), true, 'An in-progress start can be paused');
+  await settings.getByRole('button', { name: '暂停转发', exact: true }).click();
+  releaseSession(); sessionGate = undefined;
+  await checking;
+  assert.equal((await settings.evaluate(() => window.wechatDot.status())).running, false, 'A late login check must not undo pause');
+  assert.equal(JSON.parse(await readFile(join(data, 'state.json'), 'utf8')).enabled, false);
+  const checksAfterPause = sessionRequests;
+  await new Promise(r => setTimeout(r, 300));
+  assert.equal(sessionRequests, checksAfterPause, 'Pause should stop automatic login checks');
   breakSession = true;
   await settings.evaluate(() => window.wechatDot.action('discover'));
   assert.match((await settings.evaluate(() => window.wechatDot.status())).dotDetail, /Failed to fetch/, 'A page error should keep its cause instead of returning null');
@@ -305,12 +360,12 @@ try {
     const stoppedAt = dotRequests;
     await new Promise(r => setTimeout(r, 300));
     assert.equal(dotRequests, stoppedAt, 'Denied discovery must wait for an explicit action');
-    assert.equal(await settings.getByRole('button', { name: '开始连接', exact: true }).isEnabled(), false);
+    assert.equal(await settings.getByRole('button', { name: '开始转发', exact: true }).isEnabled(), false);
     assert.equal(JSON.parse(await readFile(join(data, 'state.json'), 'utf8')).enabled, false);
   }
   deniedStatus = 0;
   await settings.evaluate(() => window.wechatDot.action('discover'));
-  await settings.getByRole('button', { name: '开始连接', exact: true }).click();
+  await settings.getByRole('button', { name: '开始转发', exact: true }).click();
   await waitFor(async () => (await settings.evaluate(() => window.wechatDot.status())).running, 'Connection did not resume before the access test');
   deniedStatus = 403;
   await waitFor(async () => !(await settings.evaluate(() => window.wechatDot.status())).running, 'Denied polling should pause the bridge');
@@ -323,17 +378,51 @@ try {
   await settings.evaluate(() => window.wechatDot.action('discover'));
   signedIn = false;
   const beforeLogout = dotRequests;
-  await settings.evaluate(() => window.wechatDot.action('discover'));
+  const beforeExpiredStart = nativeSends.length;
+  await settings.evaluate(() => window.wechatDot.action('start'));
   assert.equal((await settings.evaluate(() => window.wechatDot.status())).dot, 'error');
+  assert.equal((await settings.evaluate(() => window.wechatDot.status())).running, false);
+  assert.equal(nativeSends.length, beforeExpiredStart, 'An expired login must be caught before forwarding');
   assert.equal(dotRequests, beforeLogout, 'An empty login session must not reuse an old access token');
   await desktop.close(); desktop = undefined;
   const beforePausedRestart = dotRequests;
   desktop = await launchDesktop();
   const pausedRestart = await desktop.firstWindow();
   await pausedRestart.locator('#dot-button').waitFor();
-  assert.equal((await pausedRestart.evaluate(() => window.wechatDot.status())).dot, 'idle', 'Restarting a paused connection must wait for an explicit login action');
+  assert.equal((await pausedRestart.evaluate(() => window.wechatDot.status())).dot, 'ready', 'A paused restart should retain the saved binding without checking login');
+  assert.equal(await pausedRestart.getByRole('button', { name: '开始转发', exact: true }).isEnabled(), true);
+  assert.equal(await pausedRestart.locator('#dot-badge').textContent(), '已绑定');
+  assert.equal(await pausedRestart.locator('#running').textContent(), '转发已暂停');
   await new Promise(r => setTimeout(r, 300));
   assert.equal(dotRequests, beforePausedRestart, 'A paused restart must not make automatic ChatGPT requests');
+  signedIn = true;
+  const beforeSavedStart = sessionRequests;
+  await pausedRestart.getByRole('button', { name: '开始转发', exact: true }).click();
+  await waitFor(async () => (await pausedRestart.evaluate(() => window.wechatDot.status())).running, 'A saved binding must start without asking for login again', 30000);
+  assert.ok(sessionRequests > beforeSavedStart, 'A saved binding needs a fresh login check');
+  if (!extensionContext) for (const closeFirst of [false, true]) {
+    if (closeFirst) {
+      await pausedRestart.evaluate(() => window.wechatDot.action('start'));
+      await waitFor(async () => (await pausedRestart.evaluate(() => window.wechatDot.status())).running, 'Fixture restart did not complete');
+    }
+    let releaseSend;
+    weixinSendGate = new Promise(resolve => { releaseSend = resolve; });
+    const beforeBlockedSend = sendRequests;
+    messages.push({ id: `pause-drain-${closeFirst}`, account_user_id: 'dot-member', content: { text: '暂停前已发出的回复' } });
+    await waitFor(() => sendRequests > beforeBlockedSend, 'The fixture must hold an in-flight send');
+    const beforePausedClose = sessionRequests;
+    if (closeFirst) { await closeManagedBrowser(); await new Promise(r => setTimeout(r, 500)); }
+    await pausedRestart.evaluate(() => { window.fixturePause = window.wechatDot.action('pause'); });
+    await pausedRestart.evaluate(() => window.wechatDot.status());
+    if (!closeFirst) { await closeManagedBrowser(); await new Promise(r => setTimeout(r, 500)); }
+    releaseSend(); weixinSendGate = undefined;
+    await pausedRestart.evaluate(() => window.fixturePause);
+    await new Promise(r => setTimeout(r, 500));
+    assert.equal(sessionRequests, beforePausedClose, 'Recovery must wait for the old send to finish and respect an explicit pause');
+    assert.equal((await pausedRestart.evaluate(() => window.wechatDot.status())).running, false);
+    assert.equal(JSON.parse(await readFile(join(data, 'state.json'), 'utf8')).enabled, false);
+  } else await pausedRestart.evaluate(() => window.wechatDot.action('pause'));
+  console.log('PASS: saved login checked before forwarding, closed browser recovered, cancellation and paused restart preserved.');
   console.log('PASS: denied login and polling pause requests until the user explicitly retries.');
   console.log('PASS: real Electron UI, tray lifecycle, QR fixture, draft attachments, native text reply, dedup, restart and proactive message.' + (externalBrowser ? ' External-browser crash recovery also passed.' : '') + ' These are local fixtures, not live accounts.');
 } catch (e) {

@@ -9,7 +9,7 @@ try {
   desktop = await electron.launch({ ...(process.env.WECHAT_DOT_EXECUTABLE ? { executablePath: process.env.WECHAT_DOT_EXECUTABLE, args: [] } : { args: ['.'] }), env: { ...process.env, WECHAT_DOT_DATA: data }, timeout: 60000 });
   const page = await desktop.firstWindow();
   await page.getByRole('heading', { name: 'WeChat Dot', exact: true }).waitFor();
-  assert.equal(await page.getByRole('button', { name: /开始连接/ }).isDisabled(), true);
+  assert.equal(await page.getByRole('button', { name: /开始转发/ }).isDisabled(), true);
   assert.equal(await page.getByRole('button', { name: '登录 ChatGPT', exact: true }).isVisible(), true);
   assert.equal(await page.getByRole('button', { name: '安装 Chrome 扩展', exact: true }).isVisible(), false);
   const screenshot = await desktop.evaluate(async ({ BrowserWindow }) => {

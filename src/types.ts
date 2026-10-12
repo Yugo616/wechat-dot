@@ -29,6 +29,7 @@ export type ConnectionProgress = Pick<BridgeState, 'weixinCursor' | 'weixinPrime
 export type ConnectionStatus = 'idle' | 'waiting' | 'ready' | 'error';
 export interface AppStatus {
   weixin: ConnectionStatus; dot: ConnectionStatus; running: boolean;
+  connecting?: boolean;
   weixinDetail: string; dotDetail: string; detail: string;
   dotName?: string; qr?: string; verifyRequired?: boolean;
   version: string; updatedAt?: string; updateUrl?: string;

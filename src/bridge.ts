@@ -77,7 +77,7 @@ export class Bridge {
     await this.tasks;
     this.controller = undefined;
     await this.store.update(s => { s.enabled = false; });
-    this.status({ running: false, detail: '连接已暂停。', problem: undefined });
+    this.status({ running: false, detail: '点击开始转发，即可在微信里聊天。', problem: undefined });
   }
   private async receive(signal: AbortSignal): Promise<void> {
     while (!signal.aborted) {
@@ -85,7 +85,7 @@ export class Bridge {
         const page = await this.weixin.updates(this.store.data.weixinCursor, signal);
         if (signal.aborted) break;
         await acceptWeixin(this.store, page.msgs ?? [], page.get_updates_buf);
-        this.status({ weixin: 'ready', weixinDetail: '微信已连接', weixinSendError: this.store.data.weixinSendError });
+        this.status({ weixin: 'ready', weixinDetail: '扫码绑定已保存', weixinSendError: this.store.data.weixinSendError });
       } catch (e) {
         if (signal.aborted) break;
         this.status({ weixin: 'error', weixinDetail: (e as Error).message });
@@ -102,7 +102,7 @@ export class Bridge {
         await acceptDot(this.store, messages, this.dot.members);
         await this.deliver(signal);
         if (!signal.aborted) await this.submit();
-        this.status({ dot: 'ready', dotDetail: this.dot.profile?.name ?? 'dot 已连接', updatedAt: new Date().toISOString(), problem: undefined });
+        this.status({ dot: 'ready', dotDetail: this.dot.profile?.name ?? '我的 dot', updatedAt: new Date().toISOString(), problem: undefined });
       } catch (e) {
         if (signal.aborted) break;
         if (e instanceof DotAccessError) { await this.stopForAccess(e); break; }
@@ -211,9 +211,7 @@ export class Bridge {
     }
   }
   async resolveUncertain(retry: boolean): Promise<void> {
-    await this.pause();
     await this.store.update(s => { const job = nextInbound(s); if (job?.phase === 'sending') { job.phase = retry ? 'pending' : 'done'; delete job.lastError; if (retry) delete job.requestId; } });
     this.status({ needsReview: false });
-    await this.start();
   }
 }

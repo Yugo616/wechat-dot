@@ -59,6 +59,7 @@ export class DotBrowser extends EventEmitter {
       this.embedded = new BrowserWindow({ width: 1060, height: 780, show, title: '登录 ChatGPT · WeChat Dot', webPreferences: { partition: 'persist:chatgpt', nodeIntegration: false, contextIsolation: true, sandbox: true, backgroundThrottling: false } });
       const page = this.embedded.webContents;
       this.embedded.on('close', e => { e.preventDefault(); this.embedded?.hide(); });
+      this.embedded.on('closed', () => { this.embedded = undefined; this.emit('closed'); });
       page.setWindowOpenHandler(({ url }) => ({ action: /^https?:/.test(url) ? 'allow' : 'deny', overrideBrowserWindowOptions: { webPreferences: { partition: 'persist:chatgpt', nodeIntegration: false, contextIsolation: true, sandbox: true } } }));
       await this.embedded.loadURL('about:blank');
       page.debugger.attach('1.3');
@@ -79,6 +80,7 @@ export class DotBrowser extends EventEmitter {
       const version = await response.json();
       if (version.webSocketDebuggerUrl?.endsWith(savedEndpoint)) { port = savedPort; endpoint = savedEndpoint; }
     } catch {}
+    const reuseBrowser = Boolean(port);
     if (!port) {
       await this.stopManualBrowser();
       await rm(portFile, { force: true });
@@ -98,6 +100,9 @@ export class DotBrowser extends EventEmitter {
     });
     socket.addEventListener('message', event => {
       const data = JSON.parse(String(event.data));
+      if (data.method === 'Target.detachedFromTarget' && data.params?.sessionId === this.sessionId) {
+        socket.close(); return;
+      }
       if (data.id) {
         const pending = this.pending.get(data.id); if (!pending) return;
         clearTimeout(pending.timer); this.pending.delete(data.id);
@@ -108,10 +113,10 @@ export class DotBrowser extends EventEmitter {
       }
     });
     socket.addEventListener('close', () => {
-      for (const p of this.pending.values()) { clearTimeout(p.timer); p.reject(new Error('ChatGPT 浏览器已关闭，请重新登录。')); }
+      for (const p of this.pending.values()) { clearTimeout(p.timer); p.reject(new Error('ChatGPT 浏览器已断开，正在恢复。')); }
       this.pending.clear(); this.emit('closed');
     });
-    this.targetId = await this.pageTarget();
+    this.targetId = await this.pageTarget(reuseBrowser);
     this.sessionId = (await this.command('Target.attachToTarget', { targetId: this.targetId, flatten: true }, true)).sessionId;
     await this.command('Network.enable'); await this.command('Page.enable');
     // Keep the dedicated page active while its window is minimized.
@@ -119,13 +124,14 @@ export class DotBrowser extends EventEmitter {
     this.emit('loaded');
     if (show) await this.show(); else await this.hide();
   }
-  private async pageTarget(): Promise<string> {
+  private async pageTarget(reuseBrowser = false): Promise<string> {
     const origin = new URL(this.config.homeUrl).origin + '/';
     const deadline = Date.now() + this.config.requestTimeoutMs;
     while (Date.now() < deadline) {
       const targets = await this.command('Target.getTargets', {}, true);
       const target = targets.targetInfos.find((t: any) => t.type === 'page' && t.url.startsWith(origin));
       if (target) return target.targetId;
+      if (reuseBrowser) return (await this.command('Target.createTarget', { url: this.config.homeUrl }, true)).targetId;
       await delay(this.config.composerPollIntervalMs);
     }
     throw new Error('ChatGPT 页面启动超时，请重新登录。');
@@ -133,7 +139,7 @@ export class DotBrowser extends EventEmitter {
   command(method: string, params: object = {}, root = false, timeoutMs = this.config.requestTimeoutMs): Promise<any> {
     if (this.embedded) return this.embedded.webContents.debugger.sendCommand(method, params);
     return new Promise((resolve, reject) => {
-      if (this.socket?.readyState !== WebSocket.OPEN) { reject(new Error('ChatGPT 浏览器已关闭，请重新登录。')); return; }
+      if (this.socket?.readyState !== WebSocket.OPEN) { reject(new Error('ChatGPT 浏览器已断开，正在恢复。')); return; }
       const id = ++this.sequence;
       const timer = setTimeout(() => { this.pending.delete(id); reject(new Error('ChatGPT 页面响应超时，请打开登录窗口检查。')); }, timeoutMs);
       this.pending.set(id, { resolve, reject, timer });

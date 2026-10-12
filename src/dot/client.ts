@@ -33,7 +33,11 @@ export class DotClient extends EventEmitter {
     browser.on('network', (method, params) => { if (this.window === browser) void this.observe(method, params).catch(e => this.emit('problem', e)); });
     browser.on('loaded', () => { if (this.window === browser) this.emit('loaded'); });
     browser.on('problem', e => { if (this.window === browser) this.emit('problem', e); });
-    browser.on('closed', () => { if (this.window === browser) this.window = undefined; });
+    browser.on('closed', () => {
+      if (this.window !== browser) return;
+      this.window = undefined; this.profile = undefined; this.headers = {}; this.members = new Set();
+      this.emit('closed');
+    });
   }
 
   async open(show = true): Promise<void> {
@@ -46,7 +50,7 @@ export class DotClient extends EventEmitter {
     this.listen(browser);
     const opening = this.opening = Promise.resolve().then(async () => {
       await start(browser);
-      if (this.window !== browser) throw new Error('ChatGPT 浏览器已关闭，请重新登录。');
+      if (this.window !== browser) throw new Error('ChatGPT 浏览器已断开，正在恢复。');
     }).catch(async error => {
       if (this.window === browser) this.window = undefined;
       await browser.dispose(); throw error;
@@ -101,7 +105,7 @@ export class DotClient extends EventEmitter {
     return template.replace('{roomId}', encodeURIComponent(this.profile?.roomId ?? '')).replace('{fileId}', encodeURIComponent(fileId));
   }
   async api(path: string): Promise<any> {
-    if (!this.window) throw new Error('请先登录 ChatGPT。');
+    if (!this.window) throw new Error('ChatGPT 浏览器已断开，正在恢复。');
     const url = new URL(this.prefix + path, this.config.homeUrl).href;
     const result = await this.window.run('request', { url, headers: this.headers, timeoutMs: this.config.requestTimeoutMs });
     return this.json(result);
@@ -223,6 +227,8 @@ export class DotClient extends EventEmitter {
   }
   async dispose(): Promise<void> {
     this.opening = undefined;
-    const browser = this.window; this.window = undefined; this.headers = {}; await browser?.dispose();
+    const browser = this.window;
+    this.window = undefined; this.profile = undefined; this.headers = {}; this.members = new Set();
+    await browser?.dispose();
   }
 }
