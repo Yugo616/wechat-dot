@@ -9,6 +9,8 @@ import { buildExtension } from '../scripts/extension.mjs';
 import { createServer as createTcpServer } from 'node:net';
 import { createCipheriv, createDecipheriv } from 'node:crypto';
 import { encode } from 'silk-wasm';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
 const data = await mkdtemp(join(tmpdir(), 'wechat-dot-desktop-'));
 let draftAttachment = true;
 let draftPolls = 0, lastDraftPoll;
@@ -177,10 +179,10 @@ async function closeManagedBrowser(targetOnly = false) {
 try {
   desktop = await launchDesktop();
   if (externalBrowser) await desktop.evaluate(async (_, executable) => {
-    const cp = await import('node:child_process');
-    const original = cp.default.spawn;
+    const cp = process.getBuiltinModule('child_process');
+    const original = cp.spawn;
     globalThis.fixtureBrowserEvents = [];
-    cp.default.spawn = function (command, args, options) {
+    cp.spawn = function (command, args, options) {
       if (command !== executable) return original.call(this, command, args, options);
       const child = original.call(this, command, [...args, '--enable-logging=stderr'], { ...options, stdio: ['ignore', 'ignore', 'pipe'] });
       const events = globalThis.fixtureBrowserEvents;
@@ -190,7 +192,7 @@ try {
       child.stderr.on('data', bytes => { events.push({ event: 'stderr', text: bytes.toString().slice(-3000) }); if (events.length > 40) events.splice(1, 1); });
       return child;
     };
-    (await import('node:module')).syncBuiltinESMExports();
+    process.getBuiltinModule('module').syncBuiltinESMExports();
   }, dotConfig.browserExecutables[process.platform][0]);
   const page = await desktop.firstWindow();
   await page.getByRole('heading', { name: 'WeChat Dot', exact: true }).waitFor();
@@ -445,6 +447,10 @@ try {
   console.log('PASS: denied login and polling pause requests until the user explicitly retries.');
   console.log('PASS: real Electron UI, tray lifecycle, QR fixture, draft attachments, native text reply, dedup, restart and proactive message.' + (externalBrowser ? ' External-browser crash recovery also passed.' : '') + ' These are local fixtures, not live accounts.');
 } catch (e) {
+  if (externalBrowser && process.platform === 'win32') {
+    const script = `$identity = [Security.Principal.WindowsIdentity]::GetCurrent(); $principal = [Security.Principal.WindowsPrincipal]::new($identity); Write-Output ('Elevated: ' + $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)); Get-CimInstance Win32_Process -Filter "Name='chrome.exe' OR Name='msedge.exe'" | Where-Object { $_.CommandLine -and $_.CommandLine.Contains($env:WECHAT_DOT_FIXTURE_PROFILE) } | Select-Object ProcessId, ParentProcessId, SessionId, CommandLine | ConvertTo-Json -Depth 3`;
+    console.log('FIXTURE WINDOWS PROCESSES', await promisify(execFile)('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', script], { env: { ...process.env, WECHAT_DOT_FIXTURE_PROFILE: data }, timeout: 10000 }).then(r => r.stdout).catch(error => error.message));
+  }
   console.log('FIXTURE DRAFT', { draftAttachment, draftPolls, lastDraftPoll });
   console.log('FIXTURE REQUESTS', requests);
   console.log('FIXTURE DELIVERIES', { sent, nativeSends });
