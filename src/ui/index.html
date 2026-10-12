@@ -9,7 +9,7 @@
 </head>
 <body>
 <main>
-  <header><h1>WeChat Dot</h1><span id="version"></span></header>
+  <header><div class="brand"><img src="icon.svg" alt="" width="30" height="30"><h1>WeChat Dot</h1></div><span id="version"></span></header>
   <section class="accounts" aria-label="连接账号">
     <div class="account">
       <div class="account-row">
@@ -26,7 +26,7 @@
       </div>
       <div class="account-extra" id="finish-login" hidden><button data-action="finish-login">登录完成，识别 dot</button></div>
       <div class="account-extra" id="extension-area" hidden><button class="link" data-action="extension">安装 Chrome 扩展</button></div>
-      <div class="account-extra" id="dot-actions" hidden><button class="link" data-action="show-dot">打开 dot</button><button class="link" id="recheck" data-action="discover">重新检查</button></div>
+      <div class="account-extra" id="dot-actions" hidden><button class="link" data-action="show-dot">打开专用窗口</button><button class="link" id="recheck" data-action="discover">重新检查</button></div>
     </div>
   </section>
   <section class="connection-status" aria-live="polite">
@@ -39,7 +39,13 @@
   </div>
   <button class="primary" id="toggle" data-action="start" disabled>开始转发</button>
   <p class="background-note">开始后自动收起，电脑需保持开机、联网。<br>关闭窗口后仍在菜单栏或托盘运行。</p>
-  <footer><button class="link" data-action="download" id="download">下载与更新</button><button class="link" data-action="quit">退出</button></footer>
+  <footer><button class="link" data-action="check-update" id="update-button">检查更新</button><button class="link" data-action="request-exit" id="exit-button">退出</button></footer>
+  <div class="update-note" id="update-area" aria-live="polite" hidden><span id="update-detail"></span><button class="link" data-action="download" id="download">下载页面</button></div>
+  <dialog id="exit-dialog" aria-labelledby="exit-title">
+    <h2 id="exit-title">要退出 WeChat Dot 吗？</h2>
+    <p>最小化后继续在后台转发。退出后台会停止收发。</p>
+    <div class="exit-footer"><label><input type="checkbox" id="remember-exit">不再询问</label><div><button data-action="exit-minimize">最小化</button><button data-action="exit-quit">退出后台</button></div></div>
+  </dialog>
 </main>
 <script src="ui.js"></script>
 </body>

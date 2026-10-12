@@ -23,6 +23,7 @@ export interface BridgeState {
   version: 1; weixin?: WeixinAccount; dot?: DotProfile;
   weixinCursor: string; weixinPrimed?: boolean; dotCursor?: string; dotPending?: string[]; contextToken?: string; weixinSendError?: string;
   inbound: InboundJob[]; outbound: OutboundJob[]; enabled: boolean;
+  exitAction?: 'minimize' | 'quit';
   savedConnections?: Record<string, ConnectionProgress & { dot?: DotProfile }>;
 }
 export type ConnectionProgress = Pick<BridgeState, 'weixinCursor' | 'weixinPrimed' | 'dotCursor' | 'dotPending' | 'contextToken' | 'weixinSendError' | 'inbound' | 'outbound'>;
@@ -33,9 +34,11 @@ export interface AppStatus {
   weixinDetail: string; dotDetail: string; detail: string;
   dotName?: string; qr?: string; verifyRequired?: boolean;
   version: string; updatedAt?: string; updateUrl?: string;
+  update?: import('./updates/controller').UpdateStatus;
   needsReview?: boolean;
   finishLogin?: boolean;
   problem?: string;
   weixinSendError?: string;
   extension?: boolean;
+  exitAction?: 'minimize' | 'quit'; exitPrompt?: boolean;
 }

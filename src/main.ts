@@ -1,8 +1,11 @@
 import { app, BrowserWindow, ipcMain, Menu, nativeImage, screen, shell, Tray } from 'electron';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import QRCode from 'qrcode';
-import { gt, valid } from 'semver';
+import { NsisUpdater } from 'electron-updater';
+import { UpdateController } from './updates/controller';
+import { MacDownloadUpdater } from './updates/mac-download';
+import { finishMacInstall, removeMacStage, scheduleMacInstall, stageMacUpdate } from './updates/mac-install';
 import { loadConfig } from './config';
 import { StateStore } from './state';
 import { WeixinClient } from './weixin/client';
@@ -23,22 +26,50 @@ async function run(): Promise<void> {
   const store = new StateStore(app.getPath('userData')); await store.load();
   const weixin = new WeixinClient(config.weixin, app.getVersion(), store.data.weixin);
   const dot = new DotClient(config.dot);
+  const engine = process.platform === 'darwin' ? new MacDownloadUpdater() : new NsisUpdater();
+  engine.autoDownload = false; engine.autoInstallOnAppQuit = false;
+  if (engine instanceof NsisUpdater) engine.installDirectory = dirname(process.execPath);
+  engine.allowPrerelease = false; engine.allowDowngrade = false;
+  engine.setFeedURL(config.updates.feed as Parameters<typeof engine.setFeedURL>[0]);
+  if (process.platform === 'darwin') { engine.channel = `latest-${process.arch}`; engine.allowDowngrade = false; }
+  const updates = new UpdateController(engine, update => publish({ update }), async (file, version) => {
+    if (!app.isPackaged) throw new Error('请在已安装的 WeChat Dot 中更新。');
+    const installedApp = process.platform === 'darwin' ? join(process.execPath, '../../..') : '';
+    const staged = process.platform === 'darwin' ? await stageMacUpdate(file, installedApp, config.desktop.appId, version) : undefined;
+    const resume = store.data.enabled;
+    let scheduled = false;
+    try {
+      quitting = true; discoveryGeneration++; qrController?.abort();
+      await bridge.pause(); await dot.dispose(); await store.update(s => { s.enabled = resume; });
+      if (staged) { await scheduleMacInstall(staged, installedApp, version, app.getPath('userData')); scheduled = true; app.quit(); }
+      else engine.quitAndInstall(true, true);
+    } catch (error) {
+      quitting = false;
+      if (staged && !scheduled) await removeMacStage(staged.directory).catch(console.warn);
+      if (resume) await action('start');
+      throw error;
+    }
+  });
   let quitting = false, qrController: AbortController | undefined, verifyCode = '';
   let discovery: Promise<void> | undefined, discoveryGeneration = 0;
   const resumeInBackground = Boolean(store.data.enabled && store.data.weixin && store.data.dot);
   let status: AppStatus = { weixin: store.data.weixin ? 'ready' : 'idle', dot: store.data.dot ? 'ready' : 'idle', running: false,
     weixinDetail: store.data.weixin ? '扫码绑定已保存' : '用手机微信扫码', dotDetail: store.data.dot?.name ?? '在浏览器中登录 ChatGPT', dotName: store.data.dot?.name,
-    detail: store.data.dot && store.data.weixin ? '点击开始转发，即可在微信里聊天。' : '先扫码绑定微信，再登录 ChatGPT。', version: app.getVersion(), extension: config.dot.browser === 'extension' };
+    detail: store.data.dot && store.data.weixin ? '点击开始转发，即可在微信里聊天。' : '先扫码绑定微信，再登录 ChatGPT。', version: app.getVersion(), extension: config.dot.browser === 'extension', exitAction: store.data.exitAction };
   const window = new BrowserWindow({ width: config.desktop.windowWidth, height: config.desktop.minContentHeight, useContentSize: true,
-    show: false, resizable: false, maximizable: false, fullscreenable: false, title: 'WeChat Dot', backgroundColor: '#f5f5f5',
+    show: false, resizable: false, maximizable: false, fullscreenable: false, title: 'WeChat Dot', backgroundColor: '#fafaf8',
+    icon: join(app.getAppPath(), 'assets', 'icon.png'),
     webPreferences: { preload: join(__dirname, 'preload.cjs'), contextIsolation: true, nodeIntegration: false, sandbox: true } });
   window.setMenuBarVisibility(false);
-  if (process.platform === 'darwin') void app.dock?.hide();
+  if (process.platform === 'darwin') { app.dock?.setIcon(join(app.getAppPath(), 'assets', 'icon.png')); void app.dock?.hide(); }
   const trayIcon = nativeImage.createFromPath(join(app.getAppPath(), 'assets', 'tray.png'));
   if (process.platform === 'darwin') trayIcon.setTemplateImage(true);
   const tray = new Tray(trayIcon); tray.setToolTip('WeChat Dot');
   const show = () => { window.show(); window.focus(); };
-  window.once('ready-to-show', () => { if (!resumeInBackground) show(); });
+  window.once('ready-to-show', () => {
+    if (!resumeInBackground) show();
+    if (app.isPackaged && process.platform === 'darwin') void finishMacInstall(join(process.execPath, '../../..'), app.getVersion()).catch(console.warn);
+  });
   function publish(patch: Partial<AppStatus>): void {
     const wasRunning = status.running;
     const hadDotError = status.dot === 'error';
@@ -53,13 +84,14 @@ async function run(): Promise<void> {
       { label: '打开 WeChat Dot', click: show },
       { label: status.running || status.connecting ? '暂停转发' : '开始转发', enabled: status.running || status.connecting || (status.weixin === 'ready' && status.dot === 'ready'), click: () => { void action(status.running || status.connecting ? 'pause' : 'start'); } },
       { type: 'separator' },
-      { label: '打开 dot', enabled: status.dot === 'ready', click: () => { void action('show-dot'); } },
+      { label: '打开专用窗口', enabled: status.dot === 'ready', click: () => { void action('show-dot'); } },
       { label: '重新登录', submenu: [
         { label: '微信', click: () => { show(); void action('weixin'); } },
         { label: 'ChatGPT', click: () => { show(); void action('dot'); } }
       ] },
-      { label: status.updateUrl ? '下载新版本…' : '检查更新…', click: () => { void action('download'); } },
-      { type: 'separator' }, { label: '退出 WeChat Dot', click: () => app.quit() }
+      { label: status.update?.phase === 'ready' ? '重启更新' : '检查更新', click: () => { show(); void action(status.update?.phase === 'ready' ? 'install-update' : 'check-update'); } },
+      ...(store.data.exitAction ? [{ label: '恢复退出询问', click: () => { void store.update(s => { delete s.exitAction; }).then(() => publish({ exitAction: undefined })); } }] : []),
+      { type: 'separator' }, { label: '退出后台', click: () => app.quit() }
     ]));
     if (status.running && !wasRunning) {
       window.hide();
@@ -194,6 +226,20 @@ async function run(): Promise<void> {
         await action('start');
       }
       if (name === 'download') await shell.openExternal(config.updates.releaseUrl);
+      if (name === 'check-update') await updates.check();
+      if (name === 'install-update') await updates.install();
+      if (name === 'request-exit') {
+        if (store.data.exitAction === 'minimize') window.hide();
+        else if (store.data.exitAction === 'quit') app.quit();
+        else { publish({ exitPrompt: true }); show(); }
+      }
+      if (name === 'cancel-exit') publish({ exitPrompt: false });
+      if (name === 'exit-minimize' || name === 'exit-quit') {
+        const choice = name === 'exit-minimize' ? 'minimize' : 'quit';
+        if (value === 'remember') await store.update(s => { s.exitAction = choice; });
+        publish({ exitPrompt: false, exitAction: store.data.exitAction });
+        if (choice === 'minimize') window.hide(); else app.quit();
+      }
       if (name === 'quit') app.quit();
     } catch (e) { publish({ problem: (e as Error).message }); show(); }
   }
@@ -213,11 +259,6 @@ async function run(): Promise<void> {
   });
   await window.loadFile(join(__dirname, 'index.html'));
   publish({});
-  void fetch(config.updates.apiUrl, { headers: { Accept: 'application/vnd.github+json' }, signal: AbortSignal.timeout(config.updates.timeoutMs) })
-    .then(r => r.ok ? r.json() : []).then(releases => {
-      const newer = Array.isArray(releases) && releases.find(r => !r.draft && valid(r.tag_name) && gt(r.tag_name, app.getVersion()));
-      if (newer) publish({ updateUrl: config.updates.releaseUrl });
-    }).catch(() => {});
   if (resumeInBackground) {
     publish({ connecting: true, dot: 'waiting', dotDetail: '正在恢复 ChatGPT…' });
     await discover();

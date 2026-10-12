@@ -36,4 +36,4 @@ TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE
 SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 ```
 
-程序还使用 Electron（MIT）、qrcode（MIT）和 silk-wasm（MIT）。安装包保留各依赖自带的许可文件。ChatGPT 适配代码独立编写，不包含 ChatGPT 客户端源文件。
+程序还使用 Electron（MIT）、electron-updater（MIT）、qrcode（MIT）和 silk-wasm（MIT）。安装包保留各依赖自带的许可文件。ChatGPT 适配代码独立编写，不包含 ChatGPT 客户端源文件。

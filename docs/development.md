@@ -16,6 +16,8 @@ npm run release
 
 `check` 跑类型检查、单元测试和编译；`smoke` 打开真实窗口；`desktop.mjs` 用临时目录和本地接口验证文字、媒体、去重、重启、主动回复和托盘运行。
 
+图标源文件是 `assets/icon.svg` 和 `assets/tray.svg`。修改后运行 `npm run icons`，再打包。应用、Dock、Windows 桌面／任务栏和安装器使用同一份带透明边距的图标；菜单栏／托盘使用单色小图标。
+
 程序使用系统的应用数据目录。里面的 `state.json` 保存微信凭据、dot 标识、消息队列和收取位置。Chrome／Edge 使用其中的 `ChatGPT Browser` 独立资料目录保存登录，不读取日常浏览器的登录数据。发布目录只包含程序资源。
 
 通常不用改配置。需要调试时，把 `config/example.json` 复制到应用数据目录，命名为 `config.json`。默认地址、超时和限制都在 `config/defaults.json`。
@@ -80,6 +82,10 @@ WECHAT_DOT_TEST_BROWSER=extension node tests/desktop.mjs
 ```
 
 ## 发布
+
+正式版只读取 GitHub 的稳定 Release。点击「检查更新」后下载，点击「重启更新」才安装。`electron-updater` 处理版本、差分和校验；Windows 用 NSIS 安装，Mac 校验 ZIP 内的应用标识和版本后替换应用包，成功启动后清理旧包。首次没有缓存时下载完整文件。
+
+Mac M 系列、Intel 分别发布 `latest-arm64-mac.yml`、`latest-x64-mac.yml`，Windows 发布 `latest.yml`；安装包及 `.blockmap` 文件与它们放在同一个 Release。打包后运行 `node scripts/update-feed.mjs` 和 `node tests/updater.mjs`，用本地 GitHub 格式的服务检查完整下载、真实 HTTP Range 差分、安装、重启及消息状态保留。
 
 推送 `v` 开头的版本标签后，GitHub Actions 构建 macOS Apple Silicon、macOS Intel 和 Windows x64 安装包。包含 `-alpha` 的版本自动发布为预览版。
 

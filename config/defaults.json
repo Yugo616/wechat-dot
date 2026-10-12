@@ -1,5 +1,5 @@
 {
-  "desktop": { "windowWidth": 460, "minContentHeight": 300, "maxContentHeight": 720 },
+  "desktop": { "appId": "io.github.yugo616.wechatdot", "windowWidth": 420, "minContentHeight": 300, "maxContentHeight": 720 },
   "weixin": {
     "baseUrl": "https://ilinkai.weixin.qq.com",
     "cdnUrl": "https://novac2c.cdn.weixin.qq.com/c2c",
@@ -13,6 +13,7 @@
     "voiceSampleRate": 24000
   },
   "dot": {
+    "identity": { "name": "WeChat Dot 专用", "color": "#32836d" },
     "browser": "external",
     "extension": {"port":43127,"heartbeatMs":20000,"maxPayloadBytes":8388608,"publicKey":"MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA1abP+ZnVxS4s/RLU7kw4Gg0ujfV82oE0aZWyFhQxcJ2cQ63H6HWuvyjLpLQml9khQNYOPN08x+hi6GTpchtwS3omvIwhc1qVLd1IfUNIMujKHDTzvUXzZaXyz5A+Sgp9ljrmsB+Eon7+EVPl5aXIaPDxf/VxM9k5IFO5rLASko7/wshdopQLEz6mRIvKVFJWok3zJ2o8HuEHR00h0FC/81iSySHicEm9lbcbTHtDuU95CiGj++VLP1UC1qMyrtrV75hjkcCUtFkTOIXty2ZhJvkpmH3Md4QWoR5VDkrPp6jriuS5Vl+vdT+GoratKBOejbvJ4AmawFQemp+OieZEMwIDAQAB"},
     "browserProbeTimeoutMs": 1000,
@@ -44,5 +45,5 @@
     "sendSelectors": ["[data-testid='send-button']", "button[aria-label='Send message']", "button[aria-label='发送消息']", "button[aria-label='Send']", "button[aria-label='发送']", "button[aria-label='傳送']"]
   },
   "storage": { "maxMediaBytes": 26214400, "mediaRetentionHours": 24, "completedHistoryLimit": 2000 },
-  "updates": { "releaseUrl": "https://github.com/Yugo616/wechat-dot/releases", "apiUrl": "https://api.github.com/repos/Yugo616/wechat-dot/releases", "timeoutMs": 5000 }
+  "updates": { "releaseUrl": "https://github.com/Yugo616/wechat-dot/releases", "feed": { "provider": "github", "owner": "Yugo616", "repo": "wechat-dot" } }
 }

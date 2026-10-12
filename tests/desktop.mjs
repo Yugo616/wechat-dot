@@ -235,7 +235,15 @@ try {
     assert.equal(new URL(managedPage.url()).pathname, '/');
     documentId = await managedPage.evaluate(() => { history.pushState({}, '', '/dots/home'); return window.fixtureDocumentId = crypto.randomUUID(); });
   }
-  if (externalBrowser) browserPort = (await readFile(join(data, 'ChatGPT Browser', 'DevToolsActivePort'), 'utf8')).split('\n')[0];
+  if (externalBrowser) {
+    browserPort = (await readFile(join(data, 'ChatGPT Browser', 'DevToolsActivePort'), 'utf8')).split('\n')[0];
+    const browser = await chromium.connectOverCDP(`http://127.0.0.1:${browserPort}`);
+    try {
+      const branded = browser.contexts()[0].pages().find(p => p.url().startsWith(base));
+      await branded.getByText('WeChat Dot 专用', { exact: true }).waitFor();
+      assert.equal(await branded.title(), 'WeChat Dot 专用 · ChatGPT');
+    } finally { await browser.close(); }
+  }
   if (!extensionContext) {
     await closeManagedBrowser();
     await new Promise(r => setTimeout(r, 300));

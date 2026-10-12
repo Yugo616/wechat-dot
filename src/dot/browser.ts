@@ -7,6 +7,7 @@ import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import type { Config } from '../config';
 import { dotPageAction, pageResult } from './page';
+import { markDedicatedPage, prepareBrowserIdentity } from './identity';
 
 // The full browser owns an independent profile. Electron remains the desktop shell.
 export class DotBrowser extends EventEmitter {
@@ -39,6 +40,7 @@ export class DotBrowser extends EventEmitter {
     this.manualLogin = true;
     const directory = this.directory;
     await mkdir(directory, { recursive: true, mode: 0o700 });
+    await prepareBrowserIdentity(directory, this.config.identity);
     this.child = spawn(executable, [`--user-data-dir=${directory}`, '--no-first-run', '--no-default-browser-check', '--new-window', this.config.homeUrl], { stdio: 'ignore' });
     this.child.on('error', e => this.emit('problem', new Error(`浏览器启动失败：${e.message}`)));
   }
@@ -65,6 +67,7 @@ export class DotBrowser extends EventEmitter {
       page.debugger.attach('1.3');
       page.debugger.on('message', (_event, method, params) => this.emit('network', method, params));
       await page.debugger.sendCommand('Network.enable');
+      await page.debugger.sendCommand('Page.addScriptToEvaluateOnNewDocument', { source: this.identityScript() });
       page.on('did-finish-load', () => this.emit('loaded'));
       await this.embedded.loadURL(this.config.homeUrl);
       return;
@@ -84,6 +87,7 @@ export class DotBrowser extends EventEmitter {
     if (!port) {
       await this.stopManualBrowser();
       await rm(portFile, { force: true });
+      await prepareBrowserIdentity(directory, this.config.identity);
       const child = this.child = spawn(executable, [`--user-data-dir=${directory}`, '--remote-debugging-port=0', '--remote-debugging-address=127.0.0.1', '--no-first-run', '--no-default-browser-check', ...this.config.backgroundArguments, `--app=${this.config.homeUrl}`], { stdio: 'ignore' });
       child.on('error', e => { failed = e; });
     }
@@ -119,11 +123,14 @@ export class DotBrowser extends EventEmitter {
     this.targetId = await this.pageTarget(reuseBrowser);
     this.sessionId = (await this.command('Target.attachToTarget', { targetId: this.targetId, flatten: true }, true)).sessionId;
     await this.command('Network.enable'); await this.command('Page.enable');
+    await this.command('Page.addScriptToEvaluateOnNewDocument', { source: this.identityScript() });
+    await this.evaluate(this.identityScript());
     // Keep the dedicated page active while its window is minimized.
     await this.command('Emulation.setFocusEmulationEnabled', { enabled: true });
     this.emit('loaded');
     if (show) await this.show(); else await this.hide();
   }
+  private identityScript(): string { return `(${markDedicatedPage.toString()})(${JSON.stringify(this.config.identity)})`; }
   private async pageTarget(reuseBrowser = false): Promise<string> {
     const origin = new URL(this.config.homeUrl).origin + '/';
     const deadline = Date.now() + this.config.requestTimeoutMs;
