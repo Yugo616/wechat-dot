@@ -36,10 +36,18 @@ try {
   await page.getByRole('dialog').waitFor();
   await page.getByRole('checkbox', { name: '不再询问' }).check();
   await page.getByRole('button', { name: '最小化', exact: true }).click();
-  assert.equal(await desktop.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].isVisible()), false);
+  const waitForHidden = () => desktop.evaluate(async ({ BrowserWindow }) => {
+    const window = BrowserWindow.getAllWindows()[0];
+    if (window.isVisible()) await new Promise((resolve, reject) => {
+      const timer = setTimeout(() => reject(Error('Minimize did not hide the window')), 10000);
+      window.once('hide', () => { clearTimeout(timer); resolve(); });
+    });
+  });
+  await waitForHidden();
   assert.equal(JSON.parse(await readFile(join(data, 'state.json'), 'utf8')).exitAction, 'minimize');
   await desktop.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].show());
   await page.getByRole('button', { name: '最小化', exact: true }).click();
+  await waitForHidden();
   assert.equal(await page.getByRole('dialog').isVisible(), false);
   console.log('PASS: exit offers minimize/quit; remembering minimize persists and leaves the app running.');
   console.log('PASS: desktop launches with a fresh profile; connect waits for both accounts; no extension setup is shown.');

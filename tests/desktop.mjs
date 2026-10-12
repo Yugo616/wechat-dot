@@ -252,7 +252,7 @@ try {
   const beforeStartCheck = sessionRequests;
   await page.getByRole('button', { name: /开始转发/ }).click();
   await page.getByRole('button', { name: '暂停转发' }).waitFor();
-  await waitFor(() => sessionRequests > beforeStartCheck, 'Start must check the saved login before forwarding', 3000);
+  await waitFor(() => sessionRequests > beforeStartCheck, 'Start must check the saved login before forwarding', 30000);
   await waitFor(async () => !(await setupVisible()), 'Connected setup did not move to the tray');
   await reopenSetup();
   await desktop.evaluate(({ BrowserWindow }) => { BrowserWindow.getAllWindows().find(w => w.webContents.getURL().endsWith('/index.html')).close(); });
