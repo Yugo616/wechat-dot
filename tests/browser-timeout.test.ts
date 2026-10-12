@@ -6,9 +6,9 @@ import { DotBrowser } from '../src/dot/browser';
 
 test('closing an embedded page settles a pending command so reconnect can drain the old loop', async () => {
   const browser = new DotBrowser(defaults.dot);
-  const window = Object.assign(new EventEmitter(), { webContents: { debugger: { sendCommand: () => new Promise(() => {}) } } });
+  const window = Object.assign(new EventEmitter(), { webContents: { executeJavaScript: () => new Promise(() => {}), debugger: { sendCommand: () => new Promise(() => {}) } } });
   (browser as any).embedded = window;
-  const pending = browser.command('Runtime.evaluate');
+  const pending = browser.evaluate('fetch("/pending-request")');
   window.emit('closed');
   let timer: ReturnType<typeof setTimeout>;
   try {

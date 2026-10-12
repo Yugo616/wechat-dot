@@ -162,7 +162,6 @@ export class DotBrowser extends EventEmitter {
     });
   }
   async evaluate(expression: string, timeoutMs = this.config.requestTimeoutMs): Promise<any> {
-    if (this.embedded) return this.embedded.webContents.executeJavaScript(expression);
     const result = await this.command('Runtime.evaluate', { expression, awaitPromise: true, returnByValue: true, userGesture: true }, false, timeoutMs);
     if (result.exceptionDetails) throw new Error('ChatGPT 页面未就绪，请先完成登录。');
     return result.result?.value;
