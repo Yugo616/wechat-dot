@@ -129,3 +129,49 @@ test('disconnecting preserves a reply already waiting to be saved', async t => {
   assert.equal(store.data.outbound[0]?.message.text, '保留这条回复');
   assert.equal(store.data.dotCursor, 'fresh-reply');
 });
+
+async function manualHandoff() {
+  const manual = setup(), automatic = setup();
+  manual.browser.manualLogin = true; manual.release(); automatic.release();
+  await manual.client.login();
+  let finishClose!: () => void;
+  manual.browser.dispose = () => new Promise<void>(resolve => { finishClose = resolve; });
+  (manual.client as any).createBrowser = () => automatic.browser;
+  return { client: manual.client, automatic, finishClose: () => finishClose() };
+}
+
+test('discovery waits until the manual login browser finishes closing', async () => {
+  const fixture = await manualHandoff();
+  const finishing = fixture.client.finishLogin();
+  const discovering = fixture.client.discover();
+  await setImmediate();
+  const openedTooSoon = fixture.automatic.counts().opens;
+  fixture.finishClose();
+  await finishing;
+  assert.equal((await discovering).roomId, 'room');
+  assert.equal(openedTooSoon, 0, 'Do not start a second browser while the manual browser still owns its profile');
+  assert.equal(fixture.automatic.counts().opens, 1);
+});
+
+test('disposing during login handoff prevents a late automatic browser', async () => {
+  const fixture = await manualHandoff();
+  const finishing = fixture.client.finishLogin().catch(e => e);
+  await setImmediate();
+  await fixture.client.dispose();
+  fixture.finishClose(); await finishing;
+  assert.equal(fixture.automatic.counts().opens, 0);
+  assert.equal(fixture.client.window, undefined);
+});
+
+test('disposing during handoff also cancels discovery already waiting for it', async () => {
+  const fixture = await manualHandoff();
+  const finishing = fixture.client.finishLogin().catch(e => e);
+  const discovering = fixture.client.discover().catch(e => e);
+  await setImmediate();
+  await fixture.client.dispose();
+  fixture.finishClose();
+  await finishing;
+  const result = await discovering;
+  assert.equal(fixture.automatic.counts().opens, 0);
+  assert.ok(result instanceof Error);
+});

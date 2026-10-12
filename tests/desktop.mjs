@@ -204,7 +204,10 @@ try {
     await popup.locator('#detail').filter({ hasText: '已连接' }).waitFor();
     await popup.close();
   }
-  if (externalBrowser) await page.getByRole('button', { name: '登录完成，识别 dot' }).click();
+  if (externalBrowser) {
+    await waitFor(() => draftPolls > 0, 'The manual login page must load before confirming login', 45000);
+    await page.getByRole('button', { name: '登录完成，识别 dot' }).click();
+  }
   await page.locator('#dot-badge[data-status="ready"]').waitFor({timeout:45000});
   let managedPage, documentId;
   if (extensionContext) {

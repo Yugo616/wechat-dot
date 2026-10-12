@@ -28,7 +28,17 @@ export class DotClient extends EventEmitter {
     await this.openBrowser(browser => browser.login());
     return this.window!.manualLogin;
   }
-  async finishLogin(): Promise<void> { if (this.window?.manualLogin) { await this.dispose(); await this.open(false); } }
+  async finishLogin(): Promise<void> {
+    if (this.opening) await this.opening;
+    if (!this.window?.manualLogin) return;
+    const closing = this.dispose();
+    const transition = this.opening = closing.then(async () => {
+      if (this.opening !== transition) throw new Error('ChatGPT 浏览器已关闭。');
+      await this.openBrowser(browser => browser.open(false));
+    });
+    try { await transition; }
+    finally { if (this.opening === transition) this.opening = undefined; }
+  }
   private listen(browser: DotBrowser): void {
     browser.on('network', (method, params) => { if (this.window === browser) void this.observe(method, params).catch(e => this.emit('problem', e)); });
     browser.on('loaded', () => { if (this.window === browser) this.emit('loaded'); });

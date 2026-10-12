@@ -122,8 +122,9 @@ async function run(): Promise<void> {
       }
     })().catch(e => publish({ problem: e.message }));
   });
-  dot.on('loaded', () => { if (status.dot === 'waiting') void discover(); });
-  const discoveryTimer = setInterval(() => { if (status.dot === 'waiting') void discover(); }, config.dot.pollIntervalMs);
+  const autoDiscover = () => { if (status.dot === 'waiting' && !status.finishLogin) void discover(); };
+  dot.on('loaded', autoDiscover);
+  const discoveryTimer = setInterval(autoDiscover, config.dot.pollIntervalMs);
   app.on('will-quit', () => clearInterval(discoveryTimer));
 
   async function loginWeixin(): Promise<void> {
