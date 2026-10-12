@@ -34,6 +34,7 @@ jobs:
       - run: npm run smoke
       - run: node tests/desktop.mjs
       - name: Install browser for local connection test
+        if: runner.os != 'Windows'
         run: npx playwright-core install chromium
       - name: Test default browser connection
         run: node tests/desktop.mjs

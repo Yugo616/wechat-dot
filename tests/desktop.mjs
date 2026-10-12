@@ -134,7 +134,9 @@ const base = `http://127.0.0.1:${server.address().port}`;
 const browserMode = process.env.WECHAT_DOT_TEST_BROWSER ?? 'embedded';
 const externalBrowser = ['external', 'default'].includes(browserMode);
 const dotConfig = { ...(browserMode === 'default' ? {} : { browser: browserMode }), homeUrl: base + '/', pollIntervalMs: 50, sendTimeoutMs: 4000 };
-if (externalBrowser) dotConfig.browserExecutables = { [process.platform]: [process.env.WECHAT_DOT_TEST_CHROME || chromium.executablePath()] };
+// Windows uses the installed browser and the same discovery paths as the app.
+// The downloaded test browser can lack the ACLs required by Chromium's sandbox.
+if (externalBrowser && (process.platform !== 'win32' || process.env.WECHAT_DOT_TEST_CHROME)) dotConfig.browserExecutables = { [process.platform]: [process.env.WECHAT_DOT_TEST_CHROME || chromium.executablePath()] };
 let extensionContext;
 if (dotConfig.browser === 'extension') {
   const defaults = JSON.parse(await readFile('config/defaults.json', 'utf8'));
@@ -183,7 +185,7 @@ try {
     const original = cp.spawn;
     globalThis.fixtureBrowserEvents = [];
     cp.spawn = function (command, args, options) {
-      if (command !== executable) return original.call(this, command, args, options);
+      if (executable ? command !== executable : !/[\\/](chrome|msedge)\.exe$/i.test(command)) return original.call(this, command, args, options);
       const child = original.call(this, command, [...args, '--enable-logging=stderr'], { ...options, stdio: ['ignore', 'ignore', 'pipe'] });
       const events = globalThis.fixtureBrowserEvents;
       events.push({ event: 'spawn', pid: child.pid, args });
@@ -193,7 +195,7 @@ try {
       return child;
     };
     process.getBuiltinModule('module').syncBuiltinESMExports();
-  }, dotConfig.browserExecutables[process.platform][0]);
+  }, dotConfig.browserExecutables?.[process.platform]?.[0]);
   const page = await desktop.firstWindow();
   await page.getByRole('heading', { name: 'WeChat Dot', exact: true }).waitFor();
   await page.evaluate(() => {
