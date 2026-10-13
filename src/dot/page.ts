@@ -42,16 +42,25 @@ export async function dotPageAction(action: string, args: any = {}): Promise<any
     if (block(node) && children.length === 1 && children[0] instanceof HTMLBRElement) return '';
     return children.map((child, index) => ((index && (block(child) || block(children[index - 1]))) ? '\n' : '') + draftText(child)).join('');
   };
-  if (action === 'owned-draft') {
+  if (action === 'owned-draft' || action === 'clear-draft') {
     const e = composer();
     if (!e || (composerText(e).trim() && composerText(e) !== args.text && !(e.isContentEditable && draftText(e) === args.text))) return false;
     const form = e.closest('form') ?? e.parentElement;
     const selected = [...form?.querySelectorAll<HTMLInputElement>('input[type="file"]') ?? []].flatMap(input => [...input.files ?? []].map(f => f.name)).sort();
-    if (selected.length) return JSON.stringify(selected) === JSON.stringify([...args.names].sort());
-    for (const selector of args.attachmentSelectors as string[]) {
+    if (selected.length && JSON.stringify(selected) !== JSON.stringify([...args.names].sort())) return false;
+    for (const selector of selected.length ? [] : args.attachmentSelectors as string[]) {
       for (const item of form?.querySelectorAll<HTMLElement>(selector) ?? []) {
         if (!(item instanceof HTMLInputElement) && item.getBoundingClientRect().height > 0) return false;
       }
+    }
+    if (action === 'clear-draft' && composerText(e)) {
+      e.focus();
+      if (e instanceof HTMLTextAreaElement || e instanceof HTMLInputElement) e.select();
+      else {
+        const range = document.createRange(); range.selectNodeContents(e);
+        const selection = window.getSelection(); selection?.removeAllRanges(); selection?.addRange(range);
+      }
+      if (!document.execCommand('delete')) throw new Error('无法清理过期的草稿，请打开 dot 清空输入框。');
     }
     return true;
   }

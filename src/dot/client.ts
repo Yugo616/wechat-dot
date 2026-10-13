@@ -197,6 +197,17 @@ export class DotClient extends EventEmitter {
     try { return (await Promise.all([result, this.window!.setFiles(files.map(file => file.path))]))[0]; }
     finally { clearTimeout(timer); this.uploading = undefined; }
   }
+  async clearDraft(text: string, files: LocalFile[]): Promise<void> {
+    if (!this.window || !this.profile) throw new Error('ChatGPT 浏览器已断开，正在恢复。');
+    const page = this.window;
+    if (await page.url() !== this.profile.url) await page.navigate(this.profile.url);
+    const args = { composerSelectors: this.config.composerSelectors, attachmentSelectors: this.config.draftAttachmentSelectors, text, names: files.map(f => f.name) };
+    if (!(await page.run('clear-draft', args))) throw new Error('ChatGPT 输入框已被修改，请打开 dot 处理其中的草稿。');
+    if (files.length) {
+      await page.navigate(this.profile.url);
+      if (!(await page.run('clear-draft', { ...args, names: [] }))) throw new Error('过期的附件草稿尚未清理，请打开 dot 处理。');
+    }
+  }
   async send(text: string, files: LocalFile[], onRequest: (id: string) => Promise<void>, beforeSubmit: () => Promise<void>, preparation: { resume: boolean; begin: () => Promise<void>; reset: () => Promise<void>; notSubmitted: () => Promise<void> }): Promise<string> {
     if (!this.profile || !this.window) throw new Error('请先连接 dot。');
     if (this.pending) throw new Error('上一条消息仍在发送。');

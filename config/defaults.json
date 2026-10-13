@@ -45,6 +45,6 @@
     "draftAttachmentSelectors": ["input[type='file']", "[data-testid*='attachment']", "img[src^='blob:']", "button[aria-label*='Remove']", "button[aria-label*='移除']", "button[aria-label*='删除']", "button[aria-label*='取消上传']"],
     "sendSelectors": ["[data-testid='send-button']", "button[aria-label='Send message']", "button[aria-label='发送消息']", "button[aria-label='Send']", "button[aria-label='发送']", "button[aria-label='傳送']"]
   },
-  "storage": { "maxMediaBytes": 26214400, "mediaRetentionHours": 24, "completedHistoryLimit": 2000 },
+  "storage": { "maxMediaBytes": 26214400, "mediaRetentionHours": 24, "completedHistoryLimit": 2000, "maxBacklogAgeMs": 600000 },
   "updates": { "releaseUrl": "https://github.com/Yugo616/wechat-dot/releases", "feed": { "provider": "github", "owner": "Yugo616", "repo": "wechat-dot" } }
 }

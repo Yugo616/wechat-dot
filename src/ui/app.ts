@@ -15,6 +15,8 @@ function render(s: AppStatus) {
   const summary = connectionSummary(s);
   el('detail').textContent = summary.detail;
   el('detail').classList.toggle('problem', summary.attention);
+  el('backlog-note').hidden = !s.skippedMessages;
+  el('backlog-note').textContent = s.skippedMessages ? `已跳过 ${s.skippedMessages} 条过期消息` : '';
   const recovery = el('recovery-button');
   recovery.hidden = !summary.action;
   recovery.textContent = summary.action?.label ?? '';
@@ -69,3 +71,4 @@ el('exit-dialog').addEventListener('cancel', () => { void window.wechatDot.actio
 new ResizeObserver(() => window.wechatDot.resize(document.querySelector('main')!.getBoundingClientRect().height)).observe(document.querySelector('main')!);
 window.wechatDot.onStatus(render);
 void window.wechatDot.status().then(render);
+setInterval(() => { if (current && Object.keys(current.retries ?? {}).length) render(current); }, 1000);

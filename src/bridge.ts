@@ -1,21 +1,25 @@
 import { setTimeout as delay } from 'node:timers/promises';
 import { createHash } from 'node:crypto';
 import type { Config } from './config';
-import type { AppStatus, DotAttachment, InboundJob, LocalFile, WeixinItem } from './types';
+import type { AppStatus, BridgeTask, DotAttachment, InboundJob, LocalFile, RetryStatus, WeixinItem } from './types';
 import { StateStore } from './state';
 import { WeixinClient, WeixinExpiredError, WeixinSendRejectedError } from './weixin/client';
 import { DotClient } from './dot/client';
 import { DotAccessError } from './dot/errors';
-import { acceptDot, acceptWeixin, nextInbound, splitText } from './queue';
+import { acceptDot, acceptWeixin, expireBacklog, nextInbound, splitText } from './queue';
 import { MediaStore, MessageContentError } from './media';
 import { WeixinMedia } from './weixin/media';
 import { silkToWav } from './weixin/voice';
 import { connectionRetry } from './status';
 
+class ExpiredMessageError extends Error {}
+
 export class Bridge {
   private controller?: AbortController;
   private tasks?: Promise<void>;
   private starting?: Promise<void>;
+  private skippedMessages = 0;
+  private failures = new Map<BridgeTask, { error: Error; retry?: RetryStatus }>();
   private readonly media: MediaStore;
   private readonly weixinMedia: WeixinMedia;
   constructor(readonly store: StateStore, readonly weixin: WeixinClient, readonly dot: DotClient, readonly config: Config, readonly status: (patch: Partial<AppStatus>) => void) {
@@ -45,22 +49,43 @@ export class Bridge {
     if (!this.store.data.weixin || !this.dot.profile) throw new Error('请先连接微信和 dot。');
     const controller = this.controller = new AbortController();
     this.starting = (async () => {
-      this.status({ detail: '正在同步收取位置…' });
-      const keep = new Set([this.store.data, ...Object.values(this.store.data.savedConnections ?? {})].flatMap(s => [
-        ...s.inbound.filter(j => j.phase !== 'done').flatMap(j => j.prepared?.files.map(f => f.path) ?? []),
-        ...s.outbound.filter(j => j.phase !== 'done').flatMap(j => Object.values(j.media ?? {}).map(m => m.file.path))
-      ]));
-      await this.media.cleanup(keep);
+      this.skippedMessages = 0;
+      this.status({ detail: '正在同步收取位置…', skippedMessages: 0 });
       await this.primeWeixin(controller.signal);
       if (this.store.data.dotCursor === undefined) {
         const baseline = await this.dot.baseline();
         await this.store.update(s => { s.dotCursor = baseline.cursor; s.dotPending = baseline.pending; });
       }
       if (controller.signal.aborted) return;
+      await this.expire();
+      const keep = new Set([this.store.data, ...Object.values(this.store.data.savedConnections ?? {})].flatMap(s => [
+        ...s.inbound.filter(j => j.phase !== 'done' || j.composing).flatMap(j => j.prepared?.files.map(f => f.path) ?? []),
+        ...s.outbound.filter(j => j.phase !== 'done').flatMap(j => Object.values(j.media ?? {}).map(m => m.file.path))
+      ]));
+      await this.media.cleanup(keep);
+      if (controller.signal.aborted) return;
       await this.store.update(s => { s.enabled = true; });
       if (controller.signal.aborted) return;
-      this.status({ running: true, detail: '现在可以在微信里聊天了。', needsReview: false, problem: undefined, weixinRetry: undefined, dotRetry: undefined });
-      this.tasks = Promise.all([this.receive(controller.signal), this.pump(controller.signal)]).then(() => {});
+      this.failures.clear();
+      this.status({ running: true, detail: '现在可以在微信里聊天了。', needsReview: false, problem: undefined, weixinRetry: undefined, dotRetry: undefined, retries: {} });
+      const signal = controller.signal, interval = this.config.dot.pollIntervalMs;
+      this.tasks = Promise.all([
+        this.loop('weixinReceive', this.config.weixin.retryDelayMs, signal, async () => {
+          const page = await this.weixin.updates(this.store.data.weixinCursor, signal);
+          if (signal.aborted) return;
+          await acceptWeixin(this.store, page.msgs ?? [], page.get_updates_buf);
+          this.status({ weixin: 'ready', weixinDetail: '扫码绑定已保存', weixinSendError: this.store.data.weixinSendError });
+        }),
+        this.loop('dotReceive', interval, signal, async () => {
+          const messages = await this.dot.messages(this.store.data.dotCursor ?? '', this.store.data.dotPending);
+          if (signal.aborted) return;
+          this.skipped(await acceptDot(this.store, messages, this.dot.members, this.config.storage.maxBacklogAgeMs));
+          this.status({ dot: 'ready', dotDetail: this.dot.profile?.name ?? '我的 dot', updatedAt: new Date().toISOString() });
+        }),
+        this.loop('dotSend', interval, signal, () => this.submit(signal)),
+        this.loop('textSend', interval, signal, () => this.deliver(signal, 'text')),
+        this.loop('mediaSend', interval, signal, () => this.deliver(signal, 'media'))
+      ]).then(() => {});
     })();
     try { await this.starting; }
     catch (e) {
@@ -78,49 +103,68 @@ export class Bridge {
     await this.tasks;
     this.controller = undefined;
     await this.store.update(s => { s.enabled = false; });
-    this.status({ running: false, detail: '点击开始转发，即可在微信里聊天。', problem: undefined, weixinRetry: undefined, dotRetry: undefined });
+    this.failures.clear();
+    this.status({ running: false, detail: '点击开始转发，即可在微信里聊天。', problem: undefined, weixinRetry: undefined, dotRetry: undefined, retries: {} });
   }
-  private async receive(signal: AbortSignal): Promise<void> {
-    while (!signal.aborted) {
-      try {
-        const page = await this.weixin.updates(this.store.data.weixinCursor, signal);
-        if (signal.aborted) break;
-        await acceptWeixin(this.store, page.msgs ?? [], page.get_updates_buf);
-        this.status({ weixin: 'ready', weixinDetail: '扫码绑定已保存', weixinSendError: this.store.data.weixinSendError, weixinRetry: undefined });
-      } catch (e) {
-        if (signal.aborted) break;
-        if (e instanceof WeixinExpiredError) { await this.stopForAccess(e); break; }
-        const retry = connectionRetry(e);
-        this.status({ weixin: retry ? 'ready' : 'error', weixinDetail: retry ? '扫码绑定已保存' : (e as Error).message, weixinRetry: retry });
-      }
-      await delay(this.config.weixin.retryDelayMs, undefined, { signal }).catch(() => {});
+  private skipped(count: number): void {
+    if (!count) return;
+    this.skippedMessages += count;
+    this.status({ skippedMessages: this.skippedMessages });
+  }
+  private async expire(): Promise<void> {
+    this.skipped(await expireBacklog(this.store, this.config.storage.maxBacklogAgeMs));
+  }
+  private publishFailures(): void {
+    const retries: AppStatus['retries'] = {};
+    let problem: string | undefined, weixinRetry: string | undefined, dotRetry: string | undefined;
+    for (const [task, failure] of this.failures) {
+      if (failure.retry) {
+        retries[task] = { ...failure.retry };
+        const text = connectionRetry(failure.error) ?? '附件暂未送达，正在自动重试。新的文字消息可以继续收发。';
+        if (task === 'weixinReceive' || task === 'textSend') weixinRetry = text;
+        else dotRetry = text;
+      } else problem ??= failure.error.message;
     }
+    this.status({ retries, problem, weixinRetry, dotRetry, needsReview: Boolean(this.failures.get('dotSend') && !this.failures.get('dotSend')!.retry && nextInbound(this.store.data)?.phase === 'sending') });
   }
-  private async pump(signal: AbortSignal): Promise<void> {
+  private async loop(task: BridgeTask, interval: number, signal: AbortSignal, operation: () => Promise<void>): Promise<void> {
     while (!signal.aborted) {
       try {
-        const messages = await this.dot.messages(this.store.data.dotCursor ?? '', this.store.data.dotPending);
+        await this.expire();
         if (signal.aborted) break;
-        await acceptDot(this.store, messages, this.dot.members);
-        await this.deliver(signal);
-        if (!signal.aborted) await this.submit();
-        this.status({ dot: 'ready', dotDetail: this.dot.profile?.name ?? '我的 dot', updatedAt: new Date().toISOString(), problem: undefined, dotRetry: undefined });
+        const previous = this.failures.get(task);
+        if (previous?.retry) {
+          previous.retry = { attempt: previous.retry.attempt + 1 };
+          this.publishFailures();
+        }
+        await operation();
+        if (signal.aborted) break;
+        if (this.failures.delete(task)) this.publishFailures();
       } catch (e) {
         if (signal.aborted) break;
         if (e instanceof DotAccessError || e instanceof WeixinExpiredError) { await this.stopForAccess(e); break; }
-        const retry = connectionRetry(e);
-        this.status({ dotRetry: retry, problem: retry ? undefined : (e as Error).message, needsReview: !retry && nextInbound(this.store.data)?.phase === 'sending' });
+        const retryable = connectionRetry(e) || task === 'mediaSend' || /会自动重试/.test((e as Error).message);
+        this.failures.set(task, { error: e as Error, retry: retryable ? { attempt: this.failures.get(task)?.retry?.attempt ?? 1, nextRetryAt: Date.now() + interval } : undefined });
+        if (task === 'weixinReceive') this.status({ weixin: retryable ? 'ready' : 'error', weixinDetail: retryable ? '扫码绑定已保存' : (e as Error).message });
+        this.publishFailures();
       }
-      await delay(this.config.dot.pollIntervalMs, undefined, { signal }).catch(() => {});
+      await delay(interval, undefined, { signal }).catch(() => {});
     }
   }
   private async stopForAccess(error: DotAccessError | WeixinExpiredError): Promise<void> {
     this.controller?.abort();
     await this.store.update(s => { s.enabled = false; });
-    this.status({ running: false, ...(error instanceof WeixinExpiredError ? { weixin: 'error', weixinDetail: error.message } : { dot: 'error', dotDetail: error.message }), problem: error.message, weixinRetry: undefined, dotRetry: undefined,
+    this.failures.clear();
+    this.status({ running: false, ...(error instanceof WeixinExpiredError ? { weixin: 'error', weixinDetail: error.message } : { dot: 'error', dotDetail: error.message }), problem: error.message, weixinRetry: undefined, dotRetry: undefined, retries: {},
       needsReview: nextInbound(this.store.data)?.phase === 'sending' });
   }
-  private async submit(): Promise<void> {
+  private async submit(signal?: AbortSignal): Promise<void> {
+    await this.expire();
+    for (const expired of this.store.data.inbound.filter(j => j.expired && j.composing)) {
+      await this.dot.clearDraft(expired.prepared?.text ?? expired.text ?? '', expired.prepared?.files ?? []);
+      await this.store.update(s => { delete s.inbound.find(j => j.id === expired.id)!.composing; });
+    }
+    signal?.throwIfAborted();
     const job = nextInbound(this.store.data);
     if (!job) return;
     if (job.phase === 'sending') {
@@ -147,20 +191,33 @@ export class Bridge {
       this.status({ detail, needsReview: false });
       return;
     }
+    await this.expire();
+    signal?.throwIfAborted();
+    if (this.store.data.inbound.find(j => j.id === job.id)!.expired) return;
     const { text, files } = prepared;
     const id = await this.dot.send(text, files, async requestId => {
       await this.store.update(s => { s.inbound.find(j => j.id === job.id)!.requestId = requestId; });
     }, async () => {
-      await this.store.update(s => { const j = s.inbound.find(j => j.id === job.id)!; j.phase = 'sending'; j.text = text; j.beforeCursor = s.dotCursor; });
+      signal?.throwIfAborted();
+      await this.expire();
+      signal?.throwIfAborted();
+      if (this.store.data.inbound.find(j => j.id === job.id)!.expired) throw new ExpiredMessageError();
+      await this.store.update(s => { signal?.throwIfAborted(); const j = s.inbound.find(j => j.id === job.id)!; if (j.expired) throw new ExpiredMessageError(); j.phase = 'sending'; j.text = text; j.beforeCursor = s.dotCursor; });
+      if (signal?.aborted) {
+        await this.store.update(s => { const j = s.inbound.find(j => j.id === job.id)!; if (!j.expired) j.phase = 'pending'; });
+        signal.throwIfAborted();
+      }
     }, {
       resume: !!job.composing,
       begin: () => this.store.update(s => { s.inbound.find(j => j.id === job.id)!.composing = true; }),
       reset: () => this.store.update(s => { delete s.inbound.find(j => j.id === job.id)!.composing; }),
-      notSubmitted: () => this.store.update(s => { s.inbound.find(j => j.id === job.id)!.phase = 'pending'; })
+      notSubmitted: () => this.store.update(s => { const j = s.inbound.find(j => j.id === job.id)!; if (!j.expired) j.phase = 'pending'; })
     }).catch(async error => {
+      if (error instanceof ExpiredMessageError) return undefined;
       await this.store.update(s => { s.inbound.find(j => j.id === job.id)!.lastError = (error as Error).message; });
       throw error;
     });
+    if (!id) return;
     await this.store.update(s => { const j = s.inbound.find(j => j.id === job.id)!; j.phase = 'done'; j.dotMessageId = id; delete j.composing; delete j.lastError; });
     this.status({ detail: '消息已送到 dot，等它回复。', needsReview: false });
   }
@@ -188,15 +245,22 @@ export class Bridge {
     await this.store.update(s => { s.inbound.find(j => j.id === job.id)!.prepared = prepared; });
     return prepared;
   }
-  private async deliver(signal: AbortSignal): Promise<void> {
+  private async deliver(signal: AbortSignal, kind: 'text' | 'media' | 'all' = 'all'): Promise<void> {
+    await this.expire();
     if (!this.store.data.contextToken || this.store.data.weixinSendError) return;
     for (const job of this.store.data.outbound.filter(j => j.phase !== 'done')) {
       const parts: Array<{ text?: string; attachment?: DotAttachment }> = [
         ...splitText(job.message.text, this.config.weixin.maxTextLength).map(text => ({ text })),
         ...job.message.attachments.map(attachment => ({ attachment }))
       ];
+      const textCount = parts.length - job.message.attachments.length;
+      if (kind === 'media' && job.part < textCount) continue;
       for (let i = job.part; i < parts.length; i++) {
         if (signal.aborted) return;
+        if (kind === 'text' && i >= textCount) break;
+        await this.expire();
+        if (signal.aborted) return;
+        if (this.store.data.outbound.find(j => j.id === job.id)!.phase === 'done') break;
         const clientId = createHash('sha256').update(`${this.store.data.weixin!.botId}:${job.id}:${i}`).digest('hex');
         let item: WeixinItem;
         if (parts[i].attachment) {
@@ -220,6 +284,10 @@ export class Bridge {
           }
         } else item = { type: 1, text_item: { text: parts[i].text! } };
         if (signal.aborted) return;
+        await this.expire();
+        if (signal.aborted) return;
+        if (this.store.data.outbound.find(j => j.id === job.id)!.phase === 'done') break;
+        if (this.store.data.weixinSendError) return;
         const context = this.store.data.contextToken!;
         const lastContextMessageId = this.store.data.inbound.filter(j => j.message.context_token).at(-1)?.id;
         try { await this.weixin.send([item], context, clientId); }
@@ -233,8 +301,10 @@ export class Bridge {
         }
         await this.store.update(s => { s.outbound.find(j => j.id === job.id)!.part = i + 1; });
       }
-      await this.store.update(s => { s.outbound.find(j => j.id === job.id)!.phase = 'done'; });
-      this.status({ detail: 'dot 的回复已送到微信。' });
+      if (this.store.data.outbound.find(j => j.id === job.id)!.part >= parts.length) {
+        await this.store.update(s => { s.outbound.find(j => j.id === job.id)!.phase = 'done'; });
+        this.status({ detail: 'dot 的回复已送到微信。' });
+      }
     }
   }
   async resolveUncertain(retry: boolean): Promise<void> {

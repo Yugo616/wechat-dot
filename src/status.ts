@@ -1,4 +1,4 @@
-import type { AppStatus } from './types';
+import type { AppStatus, BridgeTask } from './types';
 
 // Page errors cross the browser boundary as text; match transport failures only.
 export function connectionRetry(error: unknown): string | undefined {
@@ -28,8 +28,13 @@ export function connectionSummary(s: AppStatus): { title: string; detail: string
       : { name: 'recover-dot', label: '重连 dot' };
     return attention(s.problem, action);
   }
-  const retry = s.weixinRetry || s.dotRetry;
-  if (s.weixinSendError) return attention((s.running || s.connecting ? '请在手机微信里给机器人发一句话，收到后会自动恢复；未发出的回复已保留。' : '回复已保留。开始转发后，在手机微信里给机器人发一句话即可继续。') + (retry ? ' 连接也在自动重试。' : ''));
-  if (retry) return { title: '正在自动重试', detail: retry, attention: false, retrying: true };
+  const labels: Record<BridgeTask, string> = { weixinReceive: '微信收取', dotReceive: 'dot 收取', dotSend: '问题发送', textSend: '回复发送', mediaSend: '附件发送' };
+  const attempts = Object.entries(s.retries ?? {}).map(([task, retry]) => {
+    const seconds = retry.nextRetryAt === undefined ? 0 : Math.max(0, Math.ceil((retry.nextRetryAt - Date.now()) / 1000));
+    return `${labels[task as BridgeTask]}：${retry.nextRetryAt === undefined ? `正在第 ${retry.attempt} 次尝试` : seconds ? `第 ${retry.attempt} 次尝试未完成，${seconds} 秒后重试` : `第 ${retry.attempt} 次尝试未完成，正在准备重试`}。`;
+  }).join(' ');
+  const retry = attempts || s.weixinRetry || s.dotRetry;
+  if (s.weixinSendError) return attention((s.running || s.connecting ? '请在手机微信里给机器人发一句话，收到后会自动恢复；过期回复会自动跳过。' : '开始转发后，在手机微信里给机器人发一句话即可继续；过期回复会自动跳过。') + (retry ? ' 连接也在自动重试。' : ''));
+  if (retry) return { title: '正在自动重试', detail: attempts ? `${attempts} 无需操作。` : retry, attention: false, retrying: true };
   return { title: s.running ? '正在转发' : s.connecting ? '正在准备' : '转发已暂停', detail: s.connecting ? '正在检查登录，稍候会自动开始转发。' : s.detail, attention: false, retrying: false };
 }

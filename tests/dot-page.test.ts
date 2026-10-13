@@ -33,6 +33,7 @@ test('resuming a textarea uses its current value, never its empty or stale child
     input.childNodes = text ? [{ nodeType: 3, textContent: text }] : [];
     const args = { text, names: ['queued.pdf'], composerSelectors: ['textarea'], attachmentSelectors: [], resumeDraft: true };
     assert.deepEqual(await dotPageAction('owned-draft', args), { ok: true, value: false });
+    assert.deepEqual(await dotPageAction('clear-draft', args), { ok: true, value: false });
     assert.deepEqual(await dotPageAction('composer', args), { ok: true, value: 'draft' });
     assert.equal(input.value, '用户另外写的草稿');
   }
