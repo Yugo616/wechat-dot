@@ -1,6 +1,16 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { dotPageAction } from '../src/dot/page';
+import { dotPageAction, pageResult } from '../src/dot/page';
+import { MessageContentError } from '../src/media';
+
+for (const withLength of [true, false]) test(`browser download size failure survives serialization (length header: ${withLength})`, async t => {
+  const previous = Object.getOwnPropertyDescriptor(globalThis, 'location');
+  Object.defineProperty(globalThis, 'location', { configurable: true, value: { href: 'https://fixture.invalid/', origin: 'https://fixture.invalid' } });
+  t.after(() => { if (previous) Object.defineProperty(globalThis, 'location', previous); else delete (globalThis as any).location; });
+  t.mock.method(globalThis, 'fetch', async () => new Response(new Uint8Array(2), { headers: withLength ? { 'content-length': '2' } : {} }));
+  const result = await dotPageAction('download', { url: '/file', maxBytes: 1, timeoutMs: 1000 });
+  assert.throws(() => pageResult(result), MessageContentError);
+});
 
 test('resuming a textarea uses its current value, never its empty or stale child text', async t => {
   class Element {

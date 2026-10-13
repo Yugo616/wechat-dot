@@ -32,10 +32,11 @@
   <section class="connection-status" aria-live="polite">
     <div class="status-line"><span id="status-dot" aria-hidden="true"></span><strong id="running">转发已暂停</strong></div>
     <p id="detail">先扫码绑定微信，再登录 ChatGPT。</p>
+    <button id="recovery-button" data-action="" hidden></button>
   </section>
   <div id="review" hidden>
     <p>请先核对 ChatGPT 中的上一条消息。</p>
-    <div class="review-actions"><button data-action="show-dot">打开 ChatGPT</button><button data-action="received">已收到，继续</button><button data-action="retry">未收到，重试</button></div>
+    <div class="review-actions"><button data-action="received">已收到，继续</button><button data-action="retry">未收到，重试</button></div>
   </div>
   <button class="primary" id="toggle" data-action="start" disabled>开始转发</button>
   <p class="background-note">开始后自动收起，电脑需保持开机、联网。<br>关闭窗口后仍在菜单栏或托盘运行。</p>

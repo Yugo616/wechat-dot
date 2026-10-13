@@ -31,6 +31,7 @@ let uploadTicket;
 let failedMediaClientId;
 let failedDotUpload = false;
 let rejectWeixinSend = false, rejectedSends = 0;
+let weixinExpired = false, qrFailures = 1, qrExpired = 1, qrRequests = 0;
 let legacyDraft = false;
 const legacyText = '旧版留下的消息\n\n下一段仍要保留。';
 let mediaDownloads = new Set();
@@ -46,9 +47,19 @@ const server = createServer(async (req, res) => {
     dotRequests++;
     if (deniedStatus) { res.statusCode = deniedStatus; return res.end('{"error":"access denied"}'); }
   }
-  if (url.pathname === '/ilink/bot/get_bot_qrcode') return res.end(JSON.stringify({ qrcode: 'fixture-qr', qrcode_img_content: base }));
-  if (url.pathname === '/ilink/bot/get_qrcode_status') return res.end(JSON.stringify({ status: 'confirmed', bot_token: 'fixture-weixin', ilink_bot_id: 'fixture-bot', ilink_user_id: 'fixture-owner', baseurl: base }));
-  if (url.pathname === '/ilink/bot/getupdates') { const msgs = incoming.splice(0); return res.end(JSON.stringify({ ret: 0, msgs, get_updates_buf: 'cursor' })); }
+  if (url.pathname === '/ilink/bot/get_bot_qrcode') {
+    qrRequests++;
+    if (qrFailures > 0) { qrFailures--; res.statusCode = 503; return res.end(); }
+    return res.end(JSON.stringify({ qrcode: 'fixture-qr', qrcode_img_content: base }));
+  }
+  if (url.pathname === '/ilink/bot/get_qrcode_status') {
+    if (qrExpired > 0) { qrExpired--; return res.end(JSON.stringify({ status: 'expired' })); }
+    return res.end(JSON.stringify({ status: 'confirmed', bot_token: 'fixture-weixin', ilink_bot_id: 'fixture-bot', ilink_user_id: 'fixture-owner', baseurl: base }));
+  }
+  if (url.pathname === '/ilink/bot/getupdates') {
+    if (weixinExpired) return res.end('{"ret":-14}');
+    const msgs = incoming.splice(0); return res.end(JSON.stringify({ ret: 0, msgs, get_updates_buf: 'cursor' }));
+  }
   if (url.pathname === '/ilink/bot/sendmessage') {
     sendRequests++; await weixinSendGate;
     const message = JSON.parse(body).msg;
@@ -211,7 +222,8 @@ try {
     assert.equal(await page.getByRole('button', { name: '登录 ChatGPT', exact: true }).isVisible(), true);
   }
   await page.getByRole('button', { name: '微信扫码', exact: true }).click();
-  await page.locator('#weixin-badge[data-status="ready"]').waitFor();
+  await page.locator('#weixin-badge[data-status="ready"]').waitFor({ timeout: 5000 });
+  assert.equal(qrRequests, 3, 'QR network failure and expiry must recover without another click');
   if (extensionContext) {
     await desktop.evaluate(({ shell }) => { shell.openPath = async () => ''; });
     await page.getByRole('button', { name: '安装 Chrome 扩展', exact: true }).click();
@@ -336,6 +348,8 @@ try {
   await waitFor(async () => (await recoverySettings.evaluate(() => window.wechatDot.status())).weixinSendError, 'A rejected reply must show its recovery action');
   await reopenSetup();
   assert.match(await recoverySettings.locator('#detail').innerText(), /微信.*发一句话/);
+  assert.match(await recoverySettings.locator('#detail').innerText(), /手机微信/);
+  assert.equal(await recoverySettings.locator('#recovery-button').isVisible(), false, 'WeChat must not require a desktop installation');
   await recoverySettings.getByRole('button', { name: '暂停转发', exact: true }).click();
   assert.equal(await recoverySettings.getByRole('button', { name: '开始转发', exact: true }).isEnabled(), true, 'Pausing a send wait must not lock the receiver');
   await recoverySettings.getByRole('button', { name: '开始转发', exact: true }).click();
@@ -383,8 +397,15 @@ try {
   assert.equal(sessionRequests, checksAfterPause, 'Pause should stop automatic login checks');
   breakSession = true;
   await settings.evaluate(() => window.wechatDot.action('discover'));
-  assert.match((await settings.evaluate(() => window.wechatDot.status())).dotDetail, /Failed to fetch/, 'A page error should keep its cause instead of returning null');
+  assert.equal(await settings.locator('#running').textContent(), '正在自动重试');
+  assert.match(await settings.locator('#detail').textContent(), /无需操作/);
+  assert.doesNotMatch(await settings.locator('body').textContent(), /Failed to fetch/);
+  const beforeAutomaticRecovery = sessionRequests;
   breakSession = false;
+  await waitFor(async () => (await settings.evaluate(() => window.wechatDot.status())).dot === 'ready', 'Login discovery must recover without another click');
+  assert.ok(sessionRequests > beforeAutomaticRecovery);
+  assert.equal((await settings.evaluate(() => window.wechatDot.status())).dotRetry, undefined);
+  assert.equal(await settings.locator('#running').textContent(), '转发已暂停', 'A discovery retry must respect the existing paused state');
   for (const code of [403, 401]) {
     deniedStatus = code;
     await settings.evaluate(() => window.wechatDot.action('discover'));
@@ -392,8 +413,10 @@ try {
     const stoppedAt = dotRequests;
     await new Promise(r => setTimeout(r, 300));
     assert.equal(dotRequests, stoppedAt, 'Denied discovery must wait for an explicit action');
-    assert.equal(await settings.getByRole('button', { name: '开始转发', exact: true }).isEnabled(), false);
+    assert.equal(await settings.locator('#toggle').isVisible(), false, 'An expired login should present its recovery button without an unusable Start button');
     assert.equal(JSON.parse(await readFile(join(data, 'state.json'), 'utf8')).enabled, false);
+    assert.equal(await settings.locator('#recovery-button').textContent(), '重连 dot');
+    assert.equal(await settings.locator('#recovery-button').isEnabled(), true);
   }
   deniedStatus = 0;
   await settings.evaluate(() => window.wechatDot.action('discover'));
@@ -407,7 +430,14 @@ try {
   assert.equal(JSON.parse(await readFile(join(data, 'state.json'), 'utf8')).enabled, false);
   assert.equal(await setupVisible(), true, 'An access failure should show its next action');
   deniedStatus = 0;
-  await settings.evaluate(() => window.wechatDot.action('discover'));
+  const beforeReloginPage = draftPolls;
+  await settings.locator('#recovery-button').click();
+  if (externalBrowser) {
+    await waitFor(() => draftPolls > beforeReloginPage, 'The reconnect login window did not load', 45000);
+    await settings.getByRole('button', { name: '登录完成，识别 dot' }).click();
+  }
+  await waitFor(async () => (await settings.evaluate(() => window.wechatDot.status())).running, 'Completing dot reconnection must resume forwarding without Start', 45000);
+  await settings.evaluate(() => window.wechatDot.action('pause'));
   signedIn = false;
   const beforeLogout = dotRequests;
   const beforeExpiredStart = nativeSends.length;
@@ -432,6 +462,43 @@ try {
   await pausedRestart.getByRole('button', { name: '开始转发', exact: true }).click();
   await waitFor(async () => (await pausedRestart.evaluate(() => window.wechatDot.status())).running, 'A saved binding must start without asking for login again', 30000);
   assert.ok(sessionRequests > beforeSavedStart, 'A saved binding needs a fresh login check');
+  weixinExpired = true;
+  await waitFor(async () => (await pausedRestart.evaluate(() => window.wechatDot.status())).weixin === 'error', 'WeChat expiry did not stop forwarding');
+  assert.equal(await setupVisible(), true, 'WeChat expiry should show its reconnect button');
+  assert.equal(await pausedRestart.locator('#recovery-button').textContent(), '重连微信');
+  assert.equal(JSON.parse(await readFile(join(data, 'state.json'), 'utf8')).enabled, false);
+  weixinExpired = false;
+  await pausedRestart.locator('#recovery-button').click();
+  await waitFor(async () => (await pausedRestart.evaluate(() => window.wechatDot.status())).running, 'Completing WeChat reconnection must resume forwarding without Start', 45000);
+  assert.equal(JSON.parse(await readFile(join(data, 'state.json'), 'utf8')).enabled, true);
+  console.log('PASS: QR failures/expiry recover automatically; inline reconnect buttons resume both accounts after login.');
+  for (const account of ['weixin', 'dot']) for (const cancel of [false, true]) {
+    await pausedRestart.evaluate(() => window.wechatDot.action('start'));
+    await waitFor(async () => (await pausedRestart.evaluate(() => window.wechatDot.status())).running, 'Start fixture before reconnect test');
+    let releaseSend;
+    weixinSendGate = new Promise(resolve => { releaseSend = resolve; });
+    const beforeSend = sendRequests, beforeQr = qrRequests, beforeLoginPage = draftPolls;
+    messages.push({ id: `reconnect-cancel-${account}-${cancel}`, account_user_id: 'dot-member', content: { text: '重连前正在发送的回复' } });
+    await waitFor(() => sendRequests > beforeSend, 'Hold a send while reconnect begins');
+    await pausedRestart.evaluate(account => { window.fixtureReconnect = [window.wechatDot.action(`recover-${account}`), window.wechatDot.action(`recover-${account}`)]; }, account);
+    if (cancel) await pausedRestart.evaluate(() => { window.fixturePause = window.wechatDot.action('pause'); });
+    releaseSend(); weixinSendGate = undefined;
+    await pausedRestart.evaluate(() => Promise.all(window.fixtureReconnect));
+    if (cancel) await pausedRestart.evaluate(() => window.fixturePause);
+    if (!cancel && account === 'dot' && externalBrowser) {
+      await waitFor(() => draftPolls > beforeLoginPage, 'Reconnect login page did not load', 45000);
+      await pausedRestart.getByRole('button', { name: '登录完成，识别 dot' }).click();
+    }
+    await waitFor(async () => Boolean((await pausedRestart.evaluate(() => window.wechatDot.status())).running) === !cancel, 'Repeated reconnect must preserve intent and respect a later pause');
+    assert.equal(qrRequests - beforeQr, !cancel && account === 'weixin' ? 1 : 0, 'Duplicate reconnect must share one login; cancelled reconnect must never open a QR');
+    if (cancel) {
+      await new Promise(r => setTimeout(r, 300));
+      assert.equal((await pausedRestart.evaluate(() => window.wechatDot.status())).running, false);
+      assert.equal(JSON.parse(await readFile(join(data, 'state.json'), 'utf8')).enabled, false);
+    }
+  }
+  await pausedRestart.evaluate(() => window.wechatDot.action('start'));
+  await waitFor(async () => (await pausedRestart.evaluate(() => window.wechatDot.status())).running, 'Resume fixture for subsequent cancellation checks');
   if (!extensionContext) for (const closeFirst of [false, true]) {
     if (closeFirst) {
       await pausedRestart.evaluate(() => window.wechatDot.action('start'));

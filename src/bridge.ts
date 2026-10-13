@@ -7,9 +7,10 @@ import { WeixinClient, WeixinExpiredError, WeixinSendRejectedError } from './wei
 import { DotClient } from './dot/client';
 import { DotAccessError } from './dot/errors';
 import { acceptDot, acceptWeixin, nextInbound, splitText } from './queue';
-import { MediaStore } from './media';
+import { MediaStore, MessageContentError } from './media';
 import { WeixinMedia } from './weixin/media';
 import { silkToWav } from './weixin/voice';
+import { connectionRetry } from './status';
 
 export class Bridge {
   private controller?: AbortController;
@@ -58,13 +59,13 @@ export class Bridge {
       if (controller.signal.aborted) return;
       await this.store.update(s => { s.enabled = true; });
       if (controller.signal.aborted) return;
-      this.status({ running: true, detail: '现在可以在微信里聊天了。', needsReview: false, problem: undefined });
+      this.status({ running: true, detail: '现在可以在微信里聊天了。', needsReview: false, problem: undefined, weixinRetry: undefined, dotRetry: undefined });
       this.tasks = Promise.all([this.receive(controller.signal), this.pump(controller.signal)]).then(() => {});
     })();
     try { await this.starting; }
     catch (e) {
       if (!controller.signal.aborted) {
-        if (e instanceof DotAccessError) await this.stopForAccess(e);
+        if (e instanceof DotAccessError || e instanceof WeixinExpiredError) await this.stopForAccess(e);
         this.controller = undefined;
         throw e;
       }
@@ -77,7 +78,7 @@ export class Bridge {
     await this.tasks;
     this.controller = undefined;
     await this.store.update(s => { s.enabled = false; });
-    this.status({ running: false, detail: '点击开始转发，即可在微信里聊天。', problem: undefined });
+    this.status({ running: false, detail: '点击开始转发，即可在微信里聊天。', problem: undefined, weixinRetry: undefined, dotRetry: undefined });
   }
   private async receive(signal: AbortSignal): Promise<void> {
     while (!signal.aborted) {
@@ -85,11 +86,12 @@ export class Bridge {
         const page = await this.weixin.updates(this.store.data.weixinCursor, signal);
         if (signal.aborted) break;
         await acceptWeixin(this.store, page.msgs ?? [], page.get_updates_buf);
-        this.status({ weixin: 'ready', weixinDetail: '扫码绑定已保存', weixinSendError: this.store.data.weixinSendError });
+        this.status({ weixin: 'ready', weixinDetail: '扫码绑定已保存', weixinSendError: this.store.data.weixinSendError, weixinRetry: undefined });
       } catch (e) {
         if (signal.aborted) break;
-        this.status({ weixin: 'error', weixinDetail: (e as Error).message });
-        if (e instanceof WeixinExpiredError) { this.controller?.abort(); this.status({ running: false }); break; }
+        if (e instanceof WeixinExpiredError) { await this.stopForAccess(e); break; }
+        const retry = connectionRetry(e);
+        this.status({ weixin: retry ? 'ready' : 'error', weixinDetail: retry ? '扫码绑定已保存' : (e as Error).message, weixinRetry: retry });
       }
       await delay(this.config.weixin.retryDelayMs, undefined, { signal }).catch(() => {});
     }
@@ -102,19 +104,20 @@ export class Bridge {
         await acceptDot(this.store, messages, this.dot.members);
         await this.deliver(signal);
         if (!signal.aborted) await this.submit();
-        this.status({ dot: 'ready', dotDetail: this.dot.profile?.name ?? '我的 dot', updatedAt: new Date().toISOString(), problem: undefined });
+        this.status({ dot: 'ready', dotDetail: this.dot.profile?.name ?? '我的 dot', updatedAt: new Date().toISOString(), problem: undefined, dotRetry: undefined });
       } catch (e) {
         if (signal.aborted) break;
-        if (e instanceof DotAccessError) { await this.stopForAccess(e); break; }
-        this.status({ problem: (e as Error).message, needsReview: nextInbound(this.store.data)?.phase === 'sending' });
+        if (e instanceof DotAccessError || e instanceof WeixinExpiredError) { await this.stopForAccess(e); break; }
+        const retry = connectionRetry(e);
+        this.status({ dotRetry: retry, problem: retry ? undefined : (e as Error).message, needsReview: !retry && nextInbound(this.store.data)?.phase === 'sending' });
       }
       await delay(this.config.dot.pollIntervalMs, undefined, { signal }).catch(() => {});
     }
   }
-  private async stopForAccess(error: DotAccessError): Promise<void> {
+  private async stopForAccess(error: DotAccessError | WeixinExpiredError): Promise<void> {
     this.controller?.abort();
     await this.store.update(s => { s.enabled = false; });
-    this.status({ running: false, dot: 'error', dotDetail: error.message, problem: error.message,
+    this.status({ running: false, ...(error instanceof WeixinExpiredError ? { weixin: 'error', weixinDetail: error.message } : { dot: 'error', dotDetail: error.message }), problem: error.message, weixinRetry: undefined, dotRetry: undefined,
       needsReview: nextInbound(this.store.data)?.phase === 'sending' });
   }
   private async submit(): Promise<void> {
@@ -126,10 +129,25 @@ export class Bridge {
         await this.store.update(s => { const j = s.inbound.find(j => j.id === job.id)!; j.phase = 'done'; j.dotMessageId = found; });
         this.status({ needsReview: false, detail: '消息已送到 dot。' }); return;
       }
-      throw new Error(job.lastError ?? '上一条消息的发送结果尚未确认。请打开 ChatGPT 核对，再选择「已收到」或「重试」。');
+      throw new Error('上一条消息的发送结果尚未确认。请打开 ChatGPT 核对，再选择「已收到」或「重试」。');
     }
-    const { text, files } = job.prepared ?? await this.prepare(job);
-    if (!text && !files.length) throw new Error('这条消息没有可发送的文字、图片或文件，请重新发送。');
+    let prepared: { text: string; files: LocalFile[] };
+    try {
+      prepared = job.prepared ?? await this.prepare(job);
+      if (!prepared.text.trim() && !prepared.files.length) throw new MessageContentError('这条消息没有可发送的文字、图片或文件，请改发文字、图片或文件。');
+    } catch (error) {
+      if (!(error instanceof MessageContentError)) throw error;
+      const detail = `已跳过这条消息：${error.message}`;
+      await this.store.update(s => {
+        const pending = s.inbound.find(j => j.id === job.id)!;
+        pending.phase = 'done'; pending.lastError = error.message;
+        const id = `input-error:${job.id}`;
+        if (!s.outbound.some(j => j.id === id)) s.outbound.push({ id, phase: 'pending', part: 0, message: { id, text: `WeChat Dot：${detail}`, attachments: [], complete: true, createdAt: new Date().toISOString() } });
+      });
+      this.status({ detail, needsReview: false });
+      return;
+    }
+    const { text, files } = prepared;
     const id = await this.dot.send(text, files, async requestId => {
       await this.store.update(s => { s.inbound.find(j => j.id === job.id)!.requestId = requestId; });
     }, async () => {
@@ -183,14 +201,23 @@ export class Bridge {
         let item: WeixinItem;
         if (parts[i].attachment) {
           this.status({ detail: '正在把 dot 的附件发到微信…' });
-          let cached = this.store.data.outbound.find(j => j.id === job.id)!.media?.[i];
-          if (!cached) {
-            const file = await this.dot.download(parts[i].attachment!, this.media);
-            await this.store.update(s => { (s.outbound.find(j => j.id === job.id)!.media ??= {})[i] = { file }; });
-            cached = { file };
+          let contentError = this.store.data.outbound.find(j => j.id === job.id)!.contentErrors?.[i];
+          try {
+            if (contentError) throw new MessageContentError(contentError);
+            let cached = this.store.data.outbound.find(j => j.id === job.id)!.media?.[i];
+            if (!cached) {
+              const file = await this.dot.download(parts[i].attachment!, this.media);
+              await this.store.update(s => { (s.outbound.find(j => j.id === job.id)!.media ??= {})[i] = { file }; });
+              cached = { file };
+            }
+            item = cached.item ?? await this.weixinMedia.upload(cached.file);
+            if (!cached.item) await this.store.update(s => { s.outbound.find(j => j.id === job.id)!.media![i].item = item; });
+          } catch (error) {
+            if (!(error instanceof MessageContentError)) throw error;
+            contentError = error.message;
+            await this.store.update(s => { (s.outbound.find(j => j.id === job.id)!.contentErrors ??= {})[i] = contentError!; });
+            item = { type: 1, text_item: { text: `WeChat Dot：附件「${parts[i].attachment!.name}」无法转发。${contentError}\n可在 dot 中查看原文件。` } };
           }
-          item = cached.item ?? await this.weixinMedia.upload(cached.file);
-          if (!cached.item) await this.store.update(s => { s.outbound.find(j => j.id === job.id)!.media![i].item = item; });
         } else item = { type: 1, text_item: { text: parts[i].text! } };
         if (signal.aborted) return;
         const context = this.store.data.contextToken!;

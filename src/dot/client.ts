@@ -4,7 +4,7 @@ import { readFile } from 'node:fs/promises';
 import { setTimeout as delay } from 'node:timers/promises';
 import type { Config } from '../config';
 import type { DotAttachment, DotProfile, LocalFile } from '../types';
-import type { MediaStore } from '../media';
+import { MessageContentError, type MediaStore } from '../media';
 import { collectNewMessages, messageBaseline } from './protocol';
 import { DotAccessError } from './errors';
 import { ExtensionBrowser } from './extension-browser';
@@ -175,7 +175,8 @@ export class DotClient extends EventEmitter {
     if (!this.window) throw new Error('请先连接 dot。');
     const url = new URL(this.prefix + this.config.transcribePath, this.config.homeUrl).href;
     const result = this.json(await this.window.run('transcribe', { url, headers: this.headers, timeoutMs: this.config.uploadTimeoutMs, base64: (await readFile(file.path)).toString('base64'), name: file.name, mime: file.mime }));
-    if (typeof result.text !== 'string' || !result.text.trim()) throw new Error('这条语音没有识别出文字，请重新录一条或改发文字。');
+    if (typeof result.text !== 'string') throw new Error('语音转写没有返回结果，会自动重试。');
+    if (!result.text.trim()) throw new MessageContentError('这条语音没有识别出文字，请重新录一条或改发文字。');
     return result.text.trim();
   }
   async download(attachment: DotAttachment, store: MediaStore): Promise<LocalFile> {

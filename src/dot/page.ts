@@ -1,3 +1,5 @@
+import { restoreError } from '../errors';
+
 // Shared by the dedicated browser and the extension. Keep this function self-contained.
 export async function dotPageAction(action: string, args: any = {}): Promise<any> {
   async function perform(): Promise<any> {
@@ -21,9 +23,10 @@ export async function dotPageAction(action: string, args: any = {}): Promise<any
     const url = new URL(args.url, location.href), same = url.origin === location.origin;
     const response = await fetch(url, { headers: same ? args.headers : {}, credentials: same ? 'include' : 'omit', signal: AbortSignal.timeout(args.timeoutMs) });
     if (!response.ok) return { status: response.status, sameOrigin: same };
-    if (Number(response.headers.get('content-length')) > args.maxBytes) throw new Error('dot 的附件超过大小限制，请在 ChatGPT 中下载。');
+    const tooLarge = () => Object.assign(new Error('dot 的附件超过大小限制，请在 ChatGPT 中下载。'), { name: 'MessageContentError' });
+    if (Number(response.headers.get('content-length')) > args.maxBytes) throw tooLarge();
     const bytes = new Uint8Array(await response.arrayBuffer());
-    if (bytes.length > args.maxBytes) throw new Error('dot 的附件超过大小限制，请在 ChatGPT 中下载。');
+    if (bytes.length > args.maxBytes) throw tooLarge();
     let binary = '';
     for (let offset = 0; offset < bytes.length; offset += 8192) binary += String.fromCharCode(...bytes.subarray(offset, offset + 8192));
     return { status: response.status, base64: btoa(binary), mime: response.headers.get('content-type') };
@@ -102,10 +105,12 @@ export async function dotPageAction(action: string, args: any = {}): Promise<any
   }
   // Chrome can resolve executeScript with null when an injected promise rejects.
   try { return { ok: true, value: await perform() }; }
-  catch (e) { return { ok: false, error: e instanceof Error ? e.message : String(e) }; }
+  catch (e) { return { ok: false, error: e instanceof Error ? e.message : String(e), errorName: (e as Error)?.name }; }
 }
 
 export function pageResult(result: any): any {
-  if (!result?.ok) throw new Error(result?.error ?? 'dot 页面没有响应，请打开标签页检查。');
+  if (!result?.ok) {
+    throw restoreError(result?.error ?? 'dot 页面没有响应，请打开标签页检查。', result?.errorName);
+  }
   return result.value;
 }

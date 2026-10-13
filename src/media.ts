@@ -4,6 +4,9 @@ import { basename, extname, join } from 'node:path';
 import type { Config } from './config';
 import type { LocalFile } from './types';
 
+import { MessageContentError } from './errors';
+export { MessageContentError } from './errors';
+
 const extensions: Record<string, string> = { png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', gif: 'image/gif', webp: 'image/webp', pdf: 'application/pdf', txt: 'text/plain', md: 'text/markdown', csv: 'text/csv', json: 'application/json', zip: 'application/zip', wav: 'audio/wav', silk: 'audio/silk', docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' };
 function contentType(bytes: Buffer, name: string): string {
   if (bytes.subarray(0, 8).equals(Buffer.from('89504e470d0a1a0a', 'hex'))) return 'image/png';
@@ -17,12 +20,12 @@ export class MediaStore {
   readonly directory: string;
   constructor(directory: string, readonly config: Config['storage']) { this.directory = join(directory, 'media'); }
   checkSize(size: number, limit = this.config.maxMediaBytes): void {
-    if (size > limit) throw new Error(`附件超过大小限制（${Math.round(this.config.maxMediaBytes / 1024 / 1024)} MB），请缩小后重发。`);
+    if (size > limit) throw new MessageContentError(`附件超过大小限制（${Math.round(this.config.maxMediaBytes / 1024 / 1024)} MB），请缩小后重发。`);
   }
   async readResponse(response: Response, limit = this.config.maxMediaBytes): Promise<Buffer> {
     if (!response.ok) throw new Error(`附件下载失败（HTTP ${response.status}），请稍后重试。`);
     this.checkSize(Number(response.headers.get('content-length') || 0), limit);
-    if (!response.body) throw new Error('附件没有内容，请重新发送。');
+    if (!response.body) throw new MessageContentError('附件没有内容，请重新发送。');
     const reader = response.body.getReader(), chunks: Uint8Array[] = [];
     let size = 0;
     try {

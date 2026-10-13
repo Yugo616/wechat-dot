@@ -8,12 +8,13 @@ import { MacDownloadUpdater } from './updates/mac-download';
 import { finishMacInstall, removeMacStage, scheduleMacInstall, stageMacUpdate } from './updates/mac-install';
 import { loadConfig } from './config';
 import { StateStore } from './state';
-import { WeixinClient } from './weixin/client';
+import { WeixinClient, WeixinExpiredError } from './weixin/client';
 import { DotClient } from './dot/client';
 import { DotAccessError } from './dot/errors';
 import { sameDotConnection } from './dot/profile';
 import { Bridge } from './bridge';
 import type { AppStatus } from './types';
+import { connectionRetry, connectionSummary, problemText } from './status';
 
 app.setName('WeChat Dot');
 if (process.env.WECHAT_DOT_DATA) app.setPath('userData', process.env.WECHAT_DOT_DATA);
@@ -52,6 +53,9 @@ async function run(): Promise<void> {
   });
   let quitting = false, qrController: AbortController | undefined, verifyCode = '';
   let discovery: Promise<void> | undefined, discoveryGeneration = 0;
+  let weixinLogin: Promise<void> | undefined;
+  let dotLogin: Promise<void> | undefined;
+  let resumeAfterLogin = false;
   const resumeInBackground = Boolean(store.data.enabled && store.data.weixin && store.data.dot);
   let status: AppStatus = { weixin: store.data.weixin ? 'ready' : 'idle', dot: store.data.dot ? 'ready' : 'idle', running: false,
     weixinDetail: store.data.weixin ? '扫码绑定已保存' : '用手机微信扫码', dotDetail: store.data.dot?.name ?? '在浏览器中登录 ChatGPT', dotName: store.data.dot?.name,
@@ -72,12 +76,13 @@ async function run(): Promise<void> {
   });
   function publish(patch: Partial<AppStatus>): void {
     const wasRunning = status.running;
-    const hadDotError = status.dot === 'error';
+    const hadAccessError = status.dot === 'error' || status.weixin === 'error';
+    if (patch.dot === 'error' || patch.weixin === 'error') resumeAfterLogin ||= Boolean(status.running || status.connecting);
+    if (patch.running) resumeAfterLogin = false;
     status = { ...status, ...patch, weixinSendError: store.data.weixinSendError };
     if (patch.running || patch.dot === 'error' || patch.weixin === 'error') status.connecting = false;
     if (!window.isDestroyed()) window.webContents.send('status', status);
-    const needsAttention = Boolean(status.problem || status.weixinSendError || status.needsReview || status.weixin === 'error' || status.dot === 'error');
-    const title = needsAttention ? '需要处理' : status.running ? '正在转发' : status.connecting ? '正在准备' : '转发已暂停';
+    const { title } = connectionSummary(status);
     tray.setToolTip(`WeChat Dot · ${title}`);
     tray.setContextMenu(Menu.buildFromTemplate([
       { label: title, enabled: false },
@@ -97,7 +102,7 @@ async function run(): Promise<void> {
       window.hide();
       void dot.window?.hide().catch(() => {});
     }
-    if (status.dot === 'error' && !hadDotError) show();
+    if ((status.dot === 'error' || status.weixin === 'error') && !hadAccessError) show();
   }
   const bridge = new Bridge(store, weixin, dot, config, publish);
   window.on('close', e => { if (!quitting) { e.preventDefault(); window.hide(); } });
@@ -107,7 +112,10 @@ async function run(): Promise<void> {
     e.preventDefault(); quitting = true; qrController?.abort();
     void dot.dispose().finally(() => app.quit());
   });
-  dot.on('problem', e => publish({ problem: e.message }));
+  dot.on('problem', e => {
+    const retry = connectionRetry(e);
+    publish(retry && (status.running || status.connecting) ? { dotRetry: retry, problem: undefined } : { problem: retry ? '网络暂时不可用，请稍后重试。' : e.message });
+  });
 
   function discover(): Promise<void> {
     if (discovery) return discovery;
@@ -123,20 +131,29 @@ async function run(): Promise<void> {
       await store.connectDot(profile);
       if (quitting || generation !== discoveryGeneration) return;
       dot.profile = store.data.dot;
-      publish({ dot: 'ready', dotName: profile.name, dotDetail: profile.name, detail: status.running ? '现在可以在微信里聊天了。' : '点击开始转发，即可在微信里聊天。', problem: undefined });
-      if (status.connecting && store.data.weixin && !status.running) await bridge.start();
+      publish({ dot: 'ready', dotName: profile.name, dotDetail: profile.name, detail: status.running ? '现在可以在微信里聊天了。' : '点击开始转发，即可在微信里聊天。', problem: undefined, dotRetry: undefined });
+      if (status.connecting && status.weixin === 'ready' && store.data.weixin && !status.running) await bridge.start();
     } catch (e) {
       if (quitting || generation !== discoveryGeneration) return;
       if (e instanceof DotAccessError) {
         await bridge.pause();
         publish({ dot: 'error', connecting: false, dotDetail: e.message, problem: e.message });
-      } else publish({ dot: 'waiting', dotDetail: (e as Error).message });
+      } else if (e instanceof WeixinExpiredError) {
+        await bridge.pause();
+        publish({ weixin: 'error', connecting: false, weixinDetail: e.message, problem: e.message });
+      } else {
+        const retry = connectionRetry(e);
+        publish({ dot: 'waiting', dotDetail: retry ? '正在自动重试…' : problemText(e), dotRetry: retry, problem: retry ? undefined : problemText(e) });
+      }
     } }).finally(() => { discovery = undefined; });
     return discovery;
   }
   async function pause(): Promise<void> {
     discoveryGeneration++;
-    publish({ running: false, connecting: false, ...(status.dot === 'waiting' && !status.finishLogin ? { dot: store.data.dot ? 'ready' as const : 'idle' as const, dotDetail: store.data.dot?.name ?? '在浏览器中登录 ChatGPT' } : {}) });
+    resumeAfterLogin = false; qrController?.abort(); qrController = undefined;
+    publish({ running: false, connecting: false, qr: undefined, verifyRequired: false,
+      ...(status.weixin === 'waiting' ? { weixin: store.data.weixin ? 'ready' as const : 'idle' as const, weixinDetail: store.data.weixin ? '扫码绑定已保存' : '用手机微信扫码' } : {}),
+      ...(status.dot === 'waiting' && !status.finishLogin ? { dot: store.data.dot ? 'ready' as const : 'idle' as const, dotDetail: store.data.dot?.name ?? '在浏览器中登录 ChatGPT' } : {}) });
     await bridge.pause();
   }
   dot.on('closed', () => {
@@ -154,56 +171,99 @@ async function run(): Promise<void> {
       }
     })().catch(e => publish({ problem: e.message }));
   });
-  const autoDiscover = () => { if (status.dot === 'waiting' && !status.finishLogin) void discover(); };
+  const autoDiscover = () => { if (status.dot === 'waiting' && !status.finishLogin && !dotLogin) void discover(); };
   dot.on('loaded', autoDiscover);
   const discoveryTimer = setInterval(autoDiscover, config.dot.pollIntervalMs);
   app.on('will-quit', () => clearInterval(discoveryTimer));
 
-  async function loginWeixin(): Promise<void> {
-    await pause();
+  function loginWeixin(resume = false): Promise<void> {
+    if (weixinLogin) return weixinLogin;
+    const operation = weixinLogin = performWeixinLogin(resume).finally(() => { if (weixinLogin === operation) weixinLogin = undefined; });
+    return operation;
+  }
+  async function performWeixinLogin(resume: boolean): Promise<void> {
+    const previous = store.data.weixin;
+    const stopping = pause(), generation = discoveryGeneration;
+    await stopping;
+    if (quitting || generation !== discoveryGeneration) return;
     qrController?.abort(); const controller = qrController = new AbortController();
-    publish({ weixin: 'waiting', qr: undefined, weixinDetail: '正在获取二维码…', problem: undefined });
-    try {
-      const qr = await weixin.request('/ilink/bot/get_bot_qrcode?bot_type=' + encodeURIComponent(config.weixin.botType), { local_token_list: [] }, { baseUrl: config.weixin.baseUrl, anonymous: true, signal: controller.signal });
-      publish({ qr: await QRCode.toDataURL(qr.qrcode_img_content, { width: 230, margin: 1 }), weixinDetail: '用微信扫一扫，再在手机上确认' });
-      let baseUrl = config.weixin.baseUrl;
-      while (!controller.signal.aborted) {
-        const query = new URLSearchParams({ qrcode: qr.qrcode });
-        if (verifyCode) { query.set('verify_code', verifyCode); verifyCode = ''; }
-        const value = await weixin.request('/ilink/bot/get_qrcode_status?' + query, undefined, { baseUrl, anonymous: true, signal: controller.signal, timeout: config.weixin.longPollTimeoutMs }).catch(e => {
-          if (e.name === 'TimeoutError') return { status: 'wait' }; throw e;
-        });
-        if (value.status === 'confirmed') {
-          if (!value.bot_token || !value.ilink_user_id || !value.ilink_bot_id) throw new Error('微信没有返回完整登录信息，请重新扫码。');
-          const account = { token: value.bot_token, userId: value.ilink_user_id, botId: value.ilink_bot_id, baseUrl: value.baseurl || baseUrl };
-          await store.connectWeixin(account);
-          weixin.account = account;
-          publish({ qr: undefined, verifyRequired: false, weixinDetail: '正在同步微信…' });
-          await bridge.primeWeixin(controller.signal);
-          publish({ weixin: 'ready', weixinDetail: '扫码绑定已保存', detail: '微信已绑定，请登录 ChatGPT。' });
-          return;
+    publish({ weixin: 'waiting', connecting: resume, qr: undefined, weixinDetail: '正在获取二维码…', problem: undefined });
+    async function retry<T>(request: () => Promise<T>): Promise<T> {
+      while (true) {
+        controller.signal.throwIfAborted();
+        try { const result = await request(); controller.signal.throwIfAborted(); publish({ weixinRetry: undefined }); return result; }
+        catch (error) {
+          if (controller.signal.aborted || !connectionRetry(error)) throw error;
+          publish({ weixinRetry: connectionRetry(error) });
+          await delay(config.weixin.retryDelayMs, undefined, { signal: controller.signal });
         }
-        if (value.status === 'expired') throw new Error('二维码已过期，请点击重新扫码。');
-        if (value.status === 'verify_code_blocked') throw new Error('配对码尝试次数过多，请稍后重新扫码。');
-        if (value.status === 'need_verifycode') publish({ verifyRequired: true, weixinDetail: '请输入手机上显示的配对码' });
-        if (value.status === 'scaned') publish({ weixinDetail: '已扫码，请在手机上确认' });
-        if (value.status === 'scaned_but_redirect' && value.redirect_host) baseUrl = `https://${value.redirect_host}`;
-        if (value.status === 'binded_redirect') throw new Error('这个微信已绑定，请在手机上选择重新连接后再扫码。');
-        await delay(config.weixin.retryDelayMs, undefined, { signal: controller.signal });
       }
-    } catch (e) { if (!controller.signal.aborted) publish({ weixin: 'error', weixinDetail: (e as Error).message, qr: undefined }); }
+    }
+    try {
+      while (!controller.signal.aborted) {
+        verifyCode = '';
+        const qr = await retry(() => weixin.request('/ilink/bot/get_bot_qrcode?bot_type=' + encodeURIComponent(config.weixin.botType), { local_token_list: [] }, { baseUrl: config.weixin.baseUrl, anonymous: true, signal: controller.signal }));
+        const image = await QRCode.toDataURL(qr.qrcode_img_content, { width: 230, margin: 1 });
+        controller.signal.throwIfAborted();
+        publish({ qr: image, weixinDetail: '用微信扫一扫，再在手机上确认' });
+        let baseUrl = config.weixin.baseUrl;
+        while (!controller.signal.aborted) {
+          const query = new URLSearchParams({ qrcode: qr.qrcode });
+          if (verifyCode) { query.set('verify_code', verifyCode); verifyCode = ''; }
+          const value = await retry(() => weixin.request('/ilink/bot/get_qrcode_status?' + query, undefined, { baseUrl, anonymous: true, signal: controller.signal, timeout: config.weixin.longPollTimeoutMs }).catch(e => {
+            if (e.name === 'TimeoutError') return { status: 'wait' }; throw e;
+          }));
+          if (value.status === 'confirmed') {
+            if (!value.bot_token || !value.ilink_user_id || !value.ilink_bot_id) throw new Error('微信没有返回完整登录信息，请重新扫码。');
+            const account = { token: value.bot_token, userId: value.ilink_user_id, botId: value.ilink_bot_id, baseUrl: value.baseurl || baseUrl };
+            controller.signal.throwIfAborted();
+            await store.connectWeixin(account);
+            weixin.account = store.data.weixin;
+            controller.signal.throwIfAborted();
+            if (previous && (previous.botId !== account.botId || previous.userId !== account.userId)) publish({ connecting: false });
+            publish({ qr: undefined, verifyRequired: false, weixinDetail: '正在同步微信…' });
+            await retry(() => bridge.primeWeixin(controller.signal));
+            publish({ weixin: 'ready', weixinDetail: '扫码绑定已保存', detail: store.data.dot ? '点击开始转发，即可在微信里聊天。' : '微信已绑定，请登录 ChatGPT。' });
+            if (resume && status.connecting && store.data.dot) { publish({ dot: 'waiting' }); await discover(); }
+            return;
+          }
+          if (value.status === 'expired') { publish({ qr: undefined, verifyRequired: false, weixinDetail: '正在自动刷新二维码…' }); break; }
+          if (value.status === 'verify_code_blocked') throw new Error('配对码尝试次数过多，请稍后重新扫码。');
+          if (value.status === 'need_verifycode') publish({ verifyRequired: true, weixinDetail: '请输入手机上显示的配对码' });
+          if (value.status === 'scaned') publish({ weixinDetail: '已扫码，请在手机上确认' });
+          if (value.status === 'scaned_but_redirect' && value.redirect_host) baseUrl = `https://${value.redirect_host}`;
+          if (value.status === 'binded_redirect') throw new Error('这个微信已绑定，请在手机上选择重新连接后再扫码。');
+          await delay(config.weixin.retryDelayMs, undefined, { signal: controller.signal });
+        }
+      }
+    } catch (e) { if (!controller.signal.aborted) publish({ weixin: 'error', weixinDetail: problemText(e, '微信连接未完成，请点击「重连微信」。'), qr: undefined, weixinRetry: undefined }); }
+  }
+  function loginDot(resume: boolean): Promise<void> {
+    if (dotLogin) return dotLogin;
+    const operation = dotLogin = performDotLogin(resume).finally(() => { if (dotLogin === operation) dotLogin = undefined; });
+    return operation;
+  }
+  async function performDotLogin(resume: boolean): Promise<void> {
+    const stopping = pause(), generation = discoveryGeneration;
+    await stopping;
+    if (quitting || generation !== discoveryGeneration) return;
+    publish({ dot: 'waiting', connecting: resume, finishLogin: false, dotDetail: '正在打开登录窗口…', problem: undefined });
+    let manual: boolean;
+    try { manual = await dot.login(); }
+    catch (error) { if (quitting || generation !== discoveryGeneration) return; throw error; }
+    if (quitting || generation !== discoveryGeneration) { await dot.dispose(); return; }
+    publish({ finishLogin: manual, dotDetail: status.extension ? '打开 Chrome 扩展，点击「连接 dot」' : manual ? '登录后，点击下方「登录完成」' : '请在 ChatGPT 窗口完成登录' });
+    if (!manual) await discover();
   }
   async function action(name: string, value?: string): Promise<void> {
     try {
-      if (name === 'weixin') { void loginWeixin(); return; }
+      if (name === 'weixin' || name === 'recover-weixin') { await loginWeixin(name === 'recover-weixin' && Boolean(resumeAfterLogin || status.running || status.connecting)); return; }
       if (name === 'verify') { verifyCode = value?.trim() ?? ''; return; }
-      if (name === 'dot') {
-        await pause(); publish({ dot: 'waiting', dotDetail: '请在浏览器中完成 ChatGPT 登录', problem: undefined });
-        const manual = await dot.login();
-        publish({ finishLogin: manual, dotDetail: status.extension ? '打开 Chrome 扩展，点击「连接 dot」' : manual ? '登录后，点击下方「登录完成」' : '请在 ChatGPT 窗口完成登录' });
-        if (!manual) await discover();
+      if (name === 'dot' || name === 'recover-dot') {
+        const resume = name === 'recover-dot' && Boolean(resumeAfterLogin || status.running || status.connecting);
+        await loginDot(resume);
       }
-      if (name === 'finish-login') { await dot.finishLogin(); publish({ finishLogin: false }); await discover(); }
+      if (name === 'finish-login') { await dotLogin; await dot.finishLogin(); publish({ finishLogin: false }); await discover(); }
       if (name === 'show-dot') await dot.showConversation();
       if (name === 'discover') await discover();
       if (name === 'extension') {
@@ -226,6 +286,7 @@ async function run(): Promise<void> {
         await action('start');
       }
       if (name === 'download') await shell.openExternal(config.updates.releaseUrl);
+      if (name === 'download-browser') await shell.openExternal(config.dot.browserDownloadUrl);
       if (name === 'check-update') await updates.check();
       if (name === 'install-update') await updates.install();
       if (name === 'request-exit') {
@@ -241,7 +302,12 @@ async function run(): Promise<void> {
         if (choice === 'minimize') window.hide(); else app.quit();
       }
       if (name === 'quit') app.quit();
-    } catch (e) { publish({ problem: (e as Error).message }); show(); }
+    } catch (e) {
+      const retry = connectionRetry(e);
+      if (retry && (!status.finishLogin || (name === 'finish-login' && !dot.window?.manualLogin)) && ['start', 'discover', 'finish-login', 'show-dot', 'recover-dot'].includes(name)) publish({ dot: 'waiting', finishLogin: false, dotRetry: retry, problem: undefined });
+      else publish({ problem: problemText(e) });
+      show();
+    }
   }
   ipcMain.handle('status', () => status);
   ipcMain.handle('action', (event, name, value) => {

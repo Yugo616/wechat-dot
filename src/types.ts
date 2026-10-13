@@ -18,7 +18,7 @@ export interface WeixinMessage {
   item_list?: WeixinItem[]; context_token?: string;
 }
 export interface InboundJob { id: string; message: WeixinMessage; phase: 'pending' | 'sending' | 'done'; composing?: boolean; lastError?: string; requestId?: string; text?: string; dotMessageId?: string; beforeCursor?: string; prepared?: { text: string; files: LocalFile[] } }
-export interface OutboundJob { id: string; message: DotMessage; part: number; phase: 'pending' | 'sending' | 'done'; media?: Record<number, { file: LocalFile; item?: WeixinItem }> }
+export interface OutboundJob { id: string; message: DotMessage; part: number; phase: 'pending' | 'sending' | 'done'; media?: Record<number, { file: LocalFile; item?: WeixinItem }>; contentErrors?: Record<number, string> }
 export interface BridgeState {
   version: 1; weixin?: WeixinAccount; dot?: DotProfile;
   weixinCursor: string; weixinPrimed?: boolean; dotCursor?: string; dotPending?: string[]; contextToken?: string; weixinSendError?: string;
@@ -38,6 +38,7 @@ export interface AppStatus {
   needsReview?: boolean;
   finishLogin?: boolean;
   problem?: string;
+  weixinRetry?: string; dotRetry?: string;
   weixinSendError?: string;
   extension?: boolean;
   exitAction?: 'minimize' | 'quit'; exitPrompt?: boolean;

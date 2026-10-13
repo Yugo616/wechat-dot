@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { once } from 'node:events';
 import { WebSocket } from 'ws';
 import { ExtensionLink } from '../src/dot/extension-link';
+import { MessageContentError } from '../src/errors';
 
 test('local extension connection returns page results and stops pending work on disconnect', async t => {
   const link = new ExtensionLink({ port: 0, origin: 'chrome-extension://fixture', heartbeatMs: 20000, maxPayloadBytes: 1048576 }, 500);
@@ -12,8 +13,12 @@ test('local extension connection returns page results and stops pending work on 
   socket.on('message', raw => {
     const request = JSON.parse(String(raw));
     if (request.action === 'url') socket.send(JSON.stringify({ id: request.id, result: 'https://example.test/dot' }));
+    if (request.action === 'oversize') socket.send(JSON.stringify({ id: request.id, error: '附件超过大小限制', errorName: 'MessageContentError' }));
+    if (request.action === 'timeout') socket.send(JSON.stringify({ id: request.id, error: 'timed out', errorName: 'TimeoutError' }));
   });
   assert.equal(await link.request('url'), 'https://example.test/dot');
+  await assert.rejects(link.request('oversize'), MessageContentError);
+  await assert.rejects(link.request('timeout'), { name: 'TimeoutError' });
   const pending = link.request('request');
   const rejected = assert.rejects(pending, /扩展已断开/);
   socket.close();

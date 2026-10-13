@@ -1,5 +1,6 @@
 import { EventEmitter, once } from 'node:events';
 import { WebSocket, WebSocketServer } from 'ws';
+import { restoreError } from '../errors';
 
 export class ExtensionLink extends EventEmitter {
   private server?: WebSocketServer;
@@ -23,7 +24,7 @@ export class ExtensionLink extends EventEmitter {
         if (data.type === 'event') { this.emit('network', data.method, data.params); return; }
         const pending = this.pending.get(data.id); if (!pending) return;
         clearTimeout(pending.timer); this.pending.delete(data.id);
-        if (data.error) pending.reject(new Error(String(data.error))); else pending.resolve(data.result);
+        if (data.error) pending.reject(restoreError(String(data.error), data.errorName)); else pending.resolve(data.result);
       });
       socket.on('close', () => {
         if (this.socket !== socket) return;

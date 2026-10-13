@@ -47,7 +47,7 @@ async function connect(): Promise<void> {
       try {
         const result = await handle(request.action, request.args);
         if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ id: request.id, result }));
-      } catch (e) { if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ id: request.id, error: (e as Error).message })); }
+      } catch (e) { if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ id: request.id, error: (e as Error).message, errorName: (e as Error).name })); }
     };
     ws.onclose = () => { if (socket === ws) socket = undefined; void chrome.action.setBadgeText({ text: '' }); };
     await new Promise<void>((resolve, reject) => {

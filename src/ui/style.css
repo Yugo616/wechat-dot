@@ -53,6 +53,7 @@ input { min-width: 0; width: 165px; background: var(--surface); padding: 6px 8px
 #status-dot.problem { background: var(--error); }
 #detail { color: var(--muted); font-size: 11px; padding-top: 6px; overflow-wrap: anywhere; }
 #detail.problem { color: var(--error); }
+#recovery-button { margin-top: 10px; border-color: var(--control-line); }
 .primary { width: 100%; padding: 9px; color: #fff; background: #32836d; border-color: transparent; font-size: 13px; }
 .primary:hover:not(:disabled) { background: #296f5c; }
 .primary:disabled { background: var(--line); color: var(--muted); opacity: 1; }
