@@ -475,6 +475,7 @@ try {
   for (const account of ['weixin', 'dot']) for (const cancel of [false, true]) {
     await pausedRestart.evaluate(() => window.wechatDot.action('start'));
     await waitFor(async () => (await pausedRestart.evaluate(() => window.wechatDot.status())).running, 'Start fixture before reconnect test');
+    await reopenSetup();
     let releaseSend;
     weixinSendGate = new Promise(resolve => { releaseSend = resolve; });
     const beforeSend = sendRequests, beforeQr = qrRequests, beforeLoginPage = draftPolls;
