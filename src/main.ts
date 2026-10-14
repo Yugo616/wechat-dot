@@ -116,6 +116,7 @@ async function run(): Promise<void> {
     const retry = connectionRetry(e);
     publish(retry && (status.running || status.connecting) ? { dotRetry: retry, problem: undefined } : { problem: retry ? '网络暂时不可用，请稍后重试。' : e.message });
   });
+  dot.on('progress', dotDetail => { if (!quitting) publish({ dotDetail, dotRetry: undefined }); });
 
   function discover(): Promise<void> {
     if (discovery) return discovery;
@@ -155,6 +156,7 @@ async function run(): Promise<void> {
       ...(status.weixin === 'waiting' ? { weixin: store.data.weixin ? 'ready' as const : 'idle' as const, weixinDetail: store.data.weixin ? '扫码绑定已保存' : '用手机微信扫码' } : {}),
       ...(status.dot === 'waiting' && !status.finishLogin ? { dot: store.data.dot ? 'ready' as const : 'idle' as const, dotDetail: store.data.dot?.name ?? '在浏览器中登录 ChatGPT' } : {}) });
     await bridge.pause();
+    if (dotLogin || dot.isOpening) await dot.dispose();
   }
   dot.on('closed', () => {
     if (quitting || status.finishLogin) return;
@@ -249,8 +251,17 @@ async function run(): Promise<void> {
     if (quitting || generation !== discoveryGeneration) return;
     publish({ dot: 'waiting', connecting: resume, finishLogin: false, dotDetail: '正在打开登录窗口…', problem: undefined });
     let manual: boolean;
-    try { manual = await dot.login(); }
-    catch (error) { if (quitting || generation !== discoveryGeneration) return; throw error; }
+    while (true) {
+      try { manual = await dot.login(); break; }
+      catch (error) {
+        if (quitting || generation !== discoveryGeneration) return;
+        const retry = connectionRetry(error);
+        if (!retry) throw error;
+        publish({ dotRetry: retry, dotDetail: '专用浏览器准备未完成，正在自动重试…' });
+        await delay(config.dot.pollIntervalMs);
+        if (quitting || generation !== discoveryGeneration) return;
+      }
+    }
     if (quitting || generation !== discoveryGeneration) { await dot.dispose(); return; }
     publish({ finishLogin: manual, dotDetail: status.extension ? '打开 Chrome 扩展，点击「连接 dot」' : manual ? '登录后，点击下方「登录完成」' : '请在 ChatGPT 窗口完成登录' });
     if (!manual) await discover();
@@ -286,7 +297,6 @@ async function run(): Promise<void> {
         await action('start');
       }
       if (name === 'download') await shell.openExternal(config.updates.releaseUrl);
-      if (name === 'download-browser') await shell.openExternal(config.dot.browserDownloadUrl);
       if (name === 'check-update') await updates.check();
       if (name === 'install-update') await updates.install();
       if (name === 'request-exit') {

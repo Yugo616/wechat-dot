@@ -80,6 +80,16 @@ test('closing can interrupt a stalled startup and cleans up any late browser', a
   assert.equal(fixture.client.window, undefined);
 });
 
+test('preparing a browser is visible to pause during saved-account discovery', async () => {
+  const fixture = setup();
+  const discovery = fixture.client.discover().catch(e => e);
+  await setImmediate();
+  assert.equal(fixture.client.isOpening, true);
+  await fixture.client.dispose(); fixture.release();
+  assert.ok(await discovery instanceof Error);
+  assert.equal(fixture.client.isOpening, false);
+});
+
 test('a failed browser open can be retried', async () => {
   const fixture = setup();
   const open = fixture.browser.open;

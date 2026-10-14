@@ -4,6 +4,16 @@ import { EventEmitter } from 'node:events';
 import defaults from '../config/defaults.json';
 import { DotBrowser } from '../src/dot/browser';
 
+test('disposing during browser preparation cannot open a late login window', async () => {
+  const browser = new DotBrowser(defaults.dot);
+  let resolve!: (path: string) => void;
+  (browser as any).executable = () => new Promise<string>(r => { resolve = r; });
+  const opening = browser.login();
+  await browser.dispose(); resolve(process.execPath);
+  await assert.rejects(opening, e => (e as Error).name === 'AbortError');
+  assert.equal((browser as any).child, undefined);
+});
+
 test('closing an embedded page settles a pending command so reconnect can drain the old loop', async () => {
   const browser = new DotBrowser(defaults.dot);
   const window = Object.assign(new EventEmitter(), { webContents: { executeJavaScript: () => new Promise(() => {}), debugger: { sendCommand: () => new Promise(() => {}) } } });

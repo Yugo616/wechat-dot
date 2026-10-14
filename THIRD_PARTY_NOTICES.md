@@ -36,4 +36,6 @@ TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE
 SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 ```
 
-程序还使用 Electron（MIT）、electron-updater（MIT）、qrcode（MIT）和 silk-wasm（MIT）。安装包保留各依赖自带的许可文件。ChatGPT 适配代码独立编写，不包含 ChatGPT 客户端源文件。
+程序还使用 Electron（MIT）、electron-updater（MIT）、qrcode（MIT）、silk-wasm（MIT）和 extract-zip（BSD-2-Clause）。安装包保留各依赖自带的许可文件。ChatGPT 适配代码独立编写，不包含 ChatGPT 客户端源文件。
+
+[Chrome for Testing](https://github.com/GoogleChromeLabs/chrome-for-testing) 在首次使用时从 Google 官方下载，不随本项目源码或安装包分发。其自身许可和第三方声明由浏览器提供。

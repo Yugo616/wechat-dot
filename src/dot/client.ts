@@ -21,6 +21,7 @@ export class DotClient extends EventEmitter {
   private pending?: { text: string; fileIds: string[]; resolve: (id: string) => void; reject: (e: Error) => void; onRequest: (id: string) => Promise<void> };
   private uploading?: { requests: Set<string>; ids: string[]; expected: number; resolve: (ids: string[]) => void; reject: (error: Error) => void };
   constructor(readonly config: Config['dot']) { super(); this.prefix = config.apiPrefixes[0]; }
+  get isOpening(): boolean { return Boolean(this.opening); }
   private createBrowser(): DotBrowser { return this.config.browser === 'extension' ? new ExtensionBrowser(this.config) : new DotBrowser(this.config); }
 
   async login(): Promise<boolean> {
@@ -43,6 +44,7 @@ export class DotClient extends EventEmitter {
     browser.on('network', (method, params) => { if (this.window === browser) void this.observe(method, params).catch(e => this.emit('problem', e)); });
     browser.on('loaded', () => { if (this.window === browser) this.emit('loaded'); });
     browser.on('problem', e => { if (this.window === browser) this.emit('problem', e); });
+    browser.on('progress', message => { if (this.window === browser) this.emit('progress', message); });
     browser.on('closed', () => {
       if (this.window !== browser) return;
       this.window = undefined; this.profile = undefined; this.headers = {}; this.members = new Set();

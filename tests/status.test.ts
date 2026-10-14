@@ -43,7 +43,7 @@ test('message and unexpected errors always have a relevant action instead of a d
   assert.deepEqual(connectionSummary({ ...status, needsReview: true }).action, { name: 'show-dot', label: '打开 dot' });
   assert.deepEqual(connectionSummary({ ...status, problem: 'ChatGPT 输入框里有未发送内容，请先发送或清空。' }).action, { name: 'show-dot', label: '打开 dot' });
   assert.deepEqual(connectionSummary({ ...status, problem: 'dot 消息接口已变化，请检查更新。' }).action, { name: 'check-update', label: '检查更新' });
-  assert.deepEqual(connectionSummary({ ...status, problem: '没有找到 Chrome 或 Edge，请安装其中一个后重新登录。' }).action, { name: 'download-browser', label: '下载 Chrome' });
+  assert.deepEqual(connectionSummary({ ...status, problem: '当前系统还没有可用的专用浏览器，请检查更新。' }).action, { name: 'check-update', label: '检查更新' });
   const unexpected = connectionSummary({ ...status, problem: 'Something went wrong' });
   assert.deepEqual(unexpected.action, { name: 'recover-dot', label: '重连 dot' });
   assert.doesNotMatch(unexpected.detail, /Something went wrong/);

@@ -15,14 +15,32 @@
   "dot": {
     "identity": { "name": "WeChat Dot 专用", "color": "#32836d" },
     "browser": "external",
-    "browserDownloadUrl": "https://www.google.com/chrome/",
     "extension": {"port":43127,"heartbeatMs":20000,"maxPayloadBytes":8388608,"publicKey":"MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA1abP+ZnVxS4s/RLU7kw4Gg0ujfV82oE0aZWyFhQxcJ2cQ63H6HWuvyjLpLQml9khQNYOPN08x+hi6GTpchtwS3omvIwhc1qVLd1IfUNIMujKHDTzvUXzZaXyz5A+Sgp9ljrmsB+Eon7+EVPl5aXIaPDxf/VxM9k5IFO5rLASko7/wshdopQLEz6mRIvKVFJWok3zJ2o8HuEHR00h0FC/81iSySHicEm9lbcbTHtDuU95CiGj++VLP1UC1qMyrtrV75hjkcCUtFkTOIXty2ZhJvkpmH3Md4QWoR5VDkrPp6jriuS5Vl+vdT+GoratKBOejbvJ4AmawFQemp+OieZEMwIDAQAB"},
     "browserProbeTimeoutMs": 1000,
     "backgroundArguments": ["--disable-background-timer-throttling", "--disable-backgrounding-occluded-windows", "--disable-renderer-backgrounding"],
-    "browserExecutables": {
-      "darwin": ["/Applications/Google Chrome.app/Contents/MacOS/Google Chrome", "/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge", "{home}/Applications/Google Chrome.app/Contents/MacOS/Google Chrome", "{home}/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge"],
-      "win32": ["{programFiles}/Google/Chrome/Application/chrome.exe", "{programFilesX86}/Microsoft/Edge/Application/msedge.exe", "{localAppData}/Google/Chrome/Application/chrome.exe", "{programFilesX86}/Google/Chrome/Application/chrome.exe", "{programFiles}/Microsoft/Edge/Application/msedge.exe", "{localAppData}/Microsoft/Edge/Application/msedge.exe"],
-      "linux": ["/usr/bin/google-chrome", "/usr/bin/chromium"]
+    "runtime": {
+      "version": "155.0.8059.79",
+      "baseUrl": "https://storage.googleapis.com/chrome-for-testing-public",
+      "downloadTimeoutMs": 300000,
+      "setupTimeoutMs": 30000,
+      "profileDirectory": "ChatGPT Browser v2",
+      "platforms": {
+        "darwin-arm64": {
+          "platform": "mac-arm64",
+          "archive": "chrome-mac-arm64.zip",
+          "executable": "chrome-mac-arm64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing"
+        },
+        "darwin-x64": {
+          "platform": "mac-x64",
+          "archive": "chrome-mac-x64.zip",
+          "executable": "chrome-mac-x64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing"
+        },
+        "win32-x64": {
+          "platform": "win64",
+          "archive": "chrome-win64.zip",
+          "executable": "chrome-win64/chrome.exe"
+        }
+      }
     },
     "homeUrl": "https://chatgpt.com/",
     "apiPrefixes": ["/backend-api", "/__codex-api"],

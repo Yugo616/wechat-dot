@@ -18,7 +18,7 @@ npm run release
 
 图标源文件是 `assets/icon.svg` 和 `assets/tray.svg`。修改后运行 `npm run icons`，再打包。应用、Dock、Windows 桌面／任务栏和安装器使用同一份带透明边距的图标；菜单栏／托盘使用单色小图标。
 
-程序使用系统的应用数据目录。里面的 `state.json` 保存微信凭据、dot 标识、消息队列和收取位置。Chrome／Edge 使用其中的 `ChatGPT Browser` 独立资料目录保存登录，不读取日常浏览器的登录数据。发布目录只包含程序资源。
+程序使用系统的应用数据目录。里面的 `state.json` 保存微信凭据、dot 标识、消息队列和收取位置。专用浏览器位于 `Browser Runtime`，登录资料位于配置指定的 `ChatGPT Browser v2`。不读取日常浏览器的资料，也不迁移旧 Chrome 的加密凭据。发布目录只包含程序资源。
 
 通常不用改配置。需要调试时，把 `config/example.json` 复制到应用数据目录，命名为 `config.json`。默认地址、超时和限制都在 `config/defaults.json`。
 
@@ -28,7 +28,11 @@ npm run release
 
 ## dot
 
-`src/dot/client.ts` 集中处理网页适配。默认使用普通 Chrome／Edge 的独立窗口。登录阶段不启用调试连接；点击「登录完成」后，程序用同一份浏览器资料连接自己的窗口。页面操作集中在 `src/dot/page.ts`，发送走网页原来的输入框和按钮。
+`src/dot/client.ts` 集中处理网页适配。`src/dot/runtime.ts` 从 Google 官方地址下载独立的 [Chrome for Testing](https://developer.chrome.com/docs/automation-and-testing/chrome-for-testing)，版本、平台、路径和等待时间在默认配置里。下载与解压完成后才写入可用标记；中断会清理临时文件，重试完成后复用缓存。Windows 使用浏览器自带的 `setup.exe` 配置沙盒目录权限。
+
+不再查找或启动用户安装的 Chrome／Edge。单独的资料目录不能隔离 macOS 应用身份：旧版本退出普通 Chrome 后，Dock 会把后续打开请求送到仍运行的专用资料实例。现在两者使用不同的应用程序和资料目录；新版本也不会连接旧实例留下的调试端口。
+
+登录阶段不启用调试连接；点击「登录完成」后，程序用同一份浏览器资料连接自己的窗口。页面操作集中在 `src/dot/page.ts`，发送走网页原来的输入框和按钮。
 
 程序观察原始请求 ID 和响应，完整回复才进入微信发送队列。暂停状态下重启只打开连接设置；只有上次仍在连接时，才自动恢复浏览器和收发。无需 API Key、中转服务器或安装扩展。
 

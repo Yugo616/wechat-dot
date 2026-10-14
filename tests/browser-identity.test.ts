@@ -4,6 +4,16 @@ import { mkdtemp, mkdir, readFile, writeFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { prepareBrowserIdentity } from '../src/dot/identity';
+import defaults from '../config/defaults.json';
+
+test('default browser cannot launch the personal Chrome or Edge application', () => {
+  const dot = defaults.dot as any;
+  assert.equal(dot.browserExecutables, undefined, 'A separate profile still shares the personal browser application identity');
+  assert.ok(dot.runtime.platforms['darwin-arm64'].executable.includes('Google Chrome for Testing.app'));
+  assert.ok(dot.runtime.platforms['darwin-x64'].executable.includes('Google Chrome for Testing.app'));
+  assert.equal(dot.runtime.platforms['win32-x64'].archive, 'chrome-win64.zip');
+  assert.notEqual(dot.runtime.profileDirectory, 'ChatGPT Browser', 'Do not attach to a surviving legacy system-Chrome process');
+});
 
 test('branding preserves existing login preferences and touches only the dedicated directory', async () => {
   const root = await mkdtemp(join(tmpdir(), 'dot-identity-'));

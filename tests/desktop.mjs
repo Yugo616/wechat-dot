@@ -142,12 +142,11 @@ const server = createServer(async (req, res) => {
 }).listen(0, '127.0.0.1');
 await once(server, 'listening');
 const base = `http://127.0.0.1:${server.address().port}`;
+const defaults = JSON.parse(await readFile('config/defaults.json', 'utf8'));
+const browserProfile = defaults.dot.runtime.profileDirectory;
 const browserMode = process.env.WECHAT_DOT_TEST_BROWSER ?? 'embedded';
 const externalBrowser = ['external', 'default'].includes(browserMode);
 const dotConfig = { ...(browserMode === 'default' ? {} : { browser: browserMode }), homeUrl: base + '/', pollIntervalMs: 50, sendTimeoutMs: 4000 };
-// Windows uses the installed browser and the same discovery paths as the app.
-// The downloaded test browser can lack the ACLs required by Chromium's sandbox.
-if (externalBrowser && (process.platform !== 'win32' || process.env.WECHAT_DOT_TEST_CHROME)) dotConfig.browserExecutables = { [process.platform]: [process.env.WECHAT_DOT_TEST_CHROME || chromium.executablePath()] };
 let extensionContext;
 if (dotConfig.browser === 'extension') {
   const defaults = JSON.parse(await readFile('config/defaults.json', 'utf8'));
@@ -171,7 +170,7 @@ async function reopenSetup() {
 }
 async function closeManagedBrowser(targetOnly = false) {
   if (externalBrowser) {
-    browserPort = (await readFile(join(data, 'ChatGPT Browser', 'DevToolsActivePort'), 'utf8')).split('\n')[0];
+    browserPort = (await readFile(join(data, browserProfile, 'DevToolsActivePort'), 'utf8')).split('\n')[0];
     const browser = await chromium.connectOverCDP(`http://127.0.0.1:${browserPort}`);
     if (targetOnly) {
       const context = browser.contexts()[0];
@@ -191,12 +190,12 @@ async function closeManagedBrowser(targetOnly = false) {
 }
 try {
   desktop = await launchDesktop();
-  if (externalBrowser) await desktop.evaluate(async (_, executable) => {
+  if (externalBrowser) await desktop.evaluate(async () => {
     const cp = process.getBuiltinModule('child_process');
     const original = cp.spawn;
     globalThis.fixtureBrowserEvents = [];
     cp.spawn = function (command, args, options) {
-      if (executable ? command !== executable : !/[\\/](chrome|msedge)\.exe$/i.test(command)) return original.call(this, command, args, options);
+      if (!command.includes('Browser Runtime')) return original.call(this, command, args, options);
       const child = original.call(this, command, [...args, '--enable-logging=stderr'], { ...options, stdio: ['ignore', 'ignore', 'pipe'] });
       const events = globalThis.fixtureBrowserEvents;
       events.push({ event: 'spawn', pid: child.pid, args });
@@ -206,7 +205,7 @@ try {
       return child;
     };
     process.getBuiltinModule('module').syncBuiltinESMExports();
-  }, dotConfig.browserExecutables?.[process.platform]?.[0]);
+  });
   const page = await desktop.firstWindow();
   await page.getByRole('heading', { name: 'WeChat Dot', exact: true }).waitFor();
   await page.evaluate(() => {
@@ -224,6 +223,27 @@ try {
   await page.getByRole('button', { name: '微信扫码', exact: true }).click();
   await page.locator('#weixin-badge[data-status="ready"]').waitFor({ timeout: 5000 });
   assert.equal(qrRequests, 3, 'QR network failure and expiry must recover without another click');
+  if (externalBrowser) {
+    await desktop.evaluate(({ net }) => {
+      const original = net.fetch.bind(net);
+      globalThis.fixtureRuntimeRequested = false;
+      globalThis.fixtureRuntimeAborted = false;
+      net.fetch = (url, options) => {
+        if (!String(url).includes('chrome-for-testing-public')) return original(url, options);
+        globalThis.fixtureRuntimeRequested = true;
+        return new Promise((_, reject) => options.signal.addEventListener('abort', () => {
+          globalThis.fixtureRuntimeAborted = true; reject(options.signal.reason);
+        }, { once: true }));
+      };
+      globalThis.fixtureRestoreDownload = () => { net.fetch = original; };
+    });
+    await page.evaluate(() => { void window.wechatDot.action('start'); });
+    await waitFor(() => desktop.evaluate(() => globalThis.fixtureRuntimeRequested), 'Cold startup did not request its own browser');
+    await page.getByRole('button', { name: '暂停转发', exact: true }).click();
+    await waitFor(() => desktop.evaluate(() => globalThis.fixtureRuntimeAborted), 'Pausing must cancel browser preparation during discovery');
+    assert.equal(await desktop.evaluate(() => globalThis.fixtureBrowserEvents.some(e => e.event === 'spawn')), false, 'Pause must not launch a late browser');
+    await desktop.evaluate(() => { globalThis.fixtureRestoreDownload(); });
+  }
   if (extensionContext) {
     await desktop.evaluate(({ shell }) => { shell.openPath = async () => ''; });
     await page.getByRole('button', { name: '安装 Chrome 扩展', exact: true }).click();
@@ -237,7 +257,7 @@ try {
     await popup.close();
   }
   if (externalBrowser) {
-    await waitFor(() => draftPolls > 0, 'The manual login page must load before confirming login', 45000);
+    await waitFor(() => draftPolls > 0, 'The managed browser must download and open the login page', defaults.dot.runtime.downloadTimeoutMs + 60000);
     await page.getByRole('button', { name: '登录完成，识别 dot' }).click();
   }
   await page.locator('#dot-badge[data-status="ready"]').waitFor({timeout:45000});
@@ -248,7 +268,7 @@ try {
     documentId = await managedPage.evaluate(() => { history.pushState({}, '', '/dots/home'); return window.fixtureDocumentId = crypto.randomUUID(); });
   }
   if (externalBrowser) {
-    browserPort = (await readFile(join(data, 'ChatGPT Browser', 'DevToolsActivePort'), 'utf8')).split('\n')[0];
+    browserPort = (await readFile(join(data, browserProfile, 'DevToolsActivePort'), 'utf8')).split('\n')[0];
     const browser = await chromium.connectOverCDP(`http://127.0.0.1:${browserPort}`);
     try {
       const branded = browser.contexts()[0].pages().find(p => p.url().startsWith(base));
@@ -308,7 +328,7 @@ try {
   assert.equal(sent[2].item_list[0].text_item.text, '主动问候');
   if (externalBrowser) {
     await waitFor(async () => JSON.parse(await readFile(join(data, 'state.json'), 'utf8')).outbound.find(job => job.id === 'proactive')?.phase === 'done', 'Proactive delivery was not saved before the crash test');
-    browserPort = (await readFile(join(data, 'ChatGPT Browser', 'DevToolsActivePort'), 'utf8')).split('\n')[0];
+    browserPort = (await readFile(join(data, browserProfile, 'DevToolsActivePort'), 'utf8')).split('\n')[0];
     const exited = once(desktop.process(), 'exit');
     await desktop.evaluate(({ app }) => { setTimeout(() => app.exit(0), 0); });
     await exited;
@@ -558,7 +578,7 @@ try {
   console.log('FIXTURE DELIVERIES', { sent, nativeSends });
   const saved = await readFile(join(data, 'state.json'), 'utf8').then(JSON.parse).catch(() => undefined);
   console.log('FIXTURE QUEUES', saved && { inbound: saved.inbound, outbound: saved.outbound });
-  if (externalBrowser && !browserPort) browserPort = await readFile(join(data, 'ChatGPT Browser', 'DevToolsActivePort'), 'utf8').then(value => value.split('\n')[0]).catch(() => undefined);
+  if (externalBrowser && !browserPort) browserPort = await readFile(join(data, browserProfile, 'DevToolsActivePort'), 'utf8').then(value => value.split('\n')[0]).catch(() => undefined);
   if (browserPort) {
     console.log('FIXTURE TARGETS', await fetch(`http://127.0.0.1:${browserPort}/json/list`, { signal: AbortSignal.timeout(3000) }).then(r => r.json()).catch(e => e.message));
     const browser = await chromium.connectOverCDP(`http://127.0.0.1:${browserPort}`, { noDefaults: true, timeout: 2000 }).catch(() => undefined);

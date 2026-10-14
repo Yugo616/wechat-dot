@@ -3,7 +3,7 @@ import type { AppStatus, BridgeTask } from './types';
 // Page errors cross the browser boundary as text; match transport failures only.
 export function connectionRetry(error: unknown): string | undefined {
   const message = error instanceof Error ? error.message : String(error);
-  if ((error as Error)?.name === 'TimeoutError' || /failed to fetch|fetch failed|networkerror|network request failed|network connection was lost|net::ERR_|HTTP (?:408|429|5\d\d)|(?:request|operation|signal).*timed? ?out|页面(?:响应|加载)超时|浏览器已断开/i.test(message)) {
+  if ((error as Error)?.name === 'TimeoutError' || /failed to fetch|fetch failed|networkerror|network request failed|network connection was lost|net::ERR_|HTTP (?:408|429|5\d\d)|(?:request|operation|signal).*timed? ?out|页面(?:响应|加载)超时|浏览器已断开|专用浏览器下载中断/i.test(message)) {
     return '连接暂时中断，正在自动重试。无需操作，不用重新登录。';
   }
 }
@@ -21,8 +21,7 @@ export function connectionSummary(s: AppStatus): { title: string; detail: string
   if (s.needsReview) return attention('上一条消息还没有确认送达。请打开 dot 核对，再选择下方的处理方式。', { name: 'show-dot', label: '打开 dot' });
   if (s.problem) {
     if (/会自动重试/.test(s.problem) && s.running) return { title: '正在自动重试', detail: s.problem, attention: false, retrying: true };
-    const action = /没有找到 Chrome 或 Edge/.test(s.problem) ? { name: 'download-browser', label: '下载 Chrome' }
-      : /检查更新/.test(s.problem) ? { name: 'check-update', label: '检查更新' }
+    const action = /检查更新/.test(s.problem) ? { name: 'check-update', label: '检查更新' }
       : /重新发送|重新录|改发文字/.test(s.problem) ? undefined
       : /输入框|草稿|请.*(?:打开|完成|处理)|核对/.test(s.problem) ? { name: 'show-dot', label: '打开 dot' }
       : { name: 'recover-dot', label: '重连 dot' };

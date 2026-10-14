@@ -1,13 +1,13 @@
-import { app, BrowserWindow } from 'electron';
+import { app, BrowserWindow, net } from 'electron';
 import { EventEmitter } from 'node:events';
 import { spawn, execFile, type ChildProcess } from 'node:child_process';
-import { access, mkdir, readFile, readlink, rm } from 'node:fs/promises';
-import { homedir } from 'node:os';
+import { mkdir, readFile, readlink, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import type { Config } from '../config';
 import { dotPageAction, pageResult } from './page';
 import { markDedicatedPage, prepareBrowserIdentity } from './identity';
+import { ensureBrowser } from './runtime';
 
 // The full browser owns an independent profile. Electron remains the desktop shell.
 export class DotBrowser extends EventEmitter {
@@ -16,11 +16,12 @@ export class DotBrowser extends EventEmitter {
   private sessionId?: string;
   private targetId?: string;
   private child?: ChildProcess;
+  private lifetime = new AbortController();
   manualLogin = false;
   private sequence = 0;
   private pending = new Map<number, { resolve: (v: any) => void; reject: (e: Error) => void; timer: ReturnType<typeof setTimeout> }>();
   constructor(readonly config: Config['dot']) { super(); }
-  private get directory(): string { return join(app.getPath('userData'), 'ChatGPT Browser'); }
+  private get directory(): string { return join(app.getPath('userData'), this.config.runtime.profileDirectory); }
   private async stopManualBrowser(): Promise<void> {
     if (process.platform === 'win32') {
       const script = `$browsers = Get-CimInstance Win32_Process -Filter "Name='chrome.exe' OR Name='msedge.exe'" | Where-Object { $_.CommandLine -and $_.CommandLine.Contains('--user-data-dir=' + $env:WECHAT_DOT_BROWSER_PROFILE) -and !$_.CommandLine.Contains('--type=') }; foreach ($browser in $browsers) { $p = Get-Process -Id $browser.ProcessId -ErrorAction SilentlyContinue; if ($p) { $closed = $p.CloseMainWindow(); if ($closed) { [void]$p.WaitForExit(2000) }; if (!$p.HasExited) { & taskkill /PID $browser.ProcessId /T /F | Out-Null } } }`;
@@ -36,28 +37,26 @@ export class DotBrowser extends EventEmitter {
   }
   async login(): Promise<void> {
     const executable = await this.executable();
+    this.lifetime.signal.throwIfAborted();
     if (!executable) { await this.open(true); return; }
     this.manualLogin = true;
     const directory = this.directory;
     await mkdir(directory, { recursive: true, mode: 0o700 });
     await prepareBrowserIdentity(directory, this.config.identity);
+    this.lifetime.signal.throwIfAborted();
     this.child = spawn(executable, [`--user-data-dir=${directory}`, '--no-first-run', '--no-default-browser-check', '--new-window', this.config.homeUrl], { stdio: 'ignore' });
     this.child.on('error', e => this.emit('problem', new Error(`浏览器启动失败：${e.message}`)));
   }
   private async executable(): Promise<string | undefined> {
     if (this.config.browser === 'embedded') return;
-    const roots: Record<string, string | undefined> = { home: homedir(), programFiles: process.env.ProgramFiles, programFilesX86: process.env['ProgramFiles(x86)'], localAppData: process.env.LOCALAPPDATA };
-    const paths = this.config.browserExecutables[process.platform as keyof typeof this.config.browserExecutables] ?? [];
-    for (const template of paths) {
-      if ([...template.matchAll(/\{(\w+)\}/g)].some(m => !roots[m[1]])) continue;
-      const path = template.replace(/\{(\w+)\}/g, (_m, key) => roots[key]!);
-      try { await access(path); return path; } catch {}
-    }
+    return ensureBrowser(this.config.runtime, join(app.getPath('userData'), 'Browser Runtime'), {
+      signal: this.lifetime.signal, fetch: net.fetch.bind(net), progress: message => this.emit('progress', message)
+    });
   }
   async open(show: boolean): Promise<void> {
     const executable = await this.executable();
+    this.lifetime.signal.throwIfAborted();
     if (!executable) {
-      if (this.config.browser === 'external') throw new Error('没有找到 Chrome 或 Edge，请安装其中一个后重新登录。');
       this.embedded = new BrowserWindow({ width: 1060, height: 780, show, title: '登录 ChatGPT · WeChat Dot', webPreferences: { partition: 'persist:chatgpt', nodeIntegration: false, contextIsolation: true, sandbox: true, backgroundThrottling: false } });
       const page = this.embedded.webContents;
       this.embedded.on('close', e => { e.preventDefault(); this.embedded?.hide(); });
@@ -88,11 +87,13 @@ export class DotBrowser extends EventEmitter {
       await this.stopManualBrowser();
       await rm(portFile, { force: true });
       await prepareBrowserIdentity(directory, this.config.identity);
+      this.lifetime.signal.throwIfAborted();
       const child = this.child = spawn(executable, [`--user-data-dir=${directory}`, '--remote-debugging-port=0', '--remote-debugging-address=127.0.0.1', '--no-first-run', '--no-default-browser-check', ...this.config.backgroundArguments, `--app=${this.config.homeUrl}`], { stdio: 'ignore' });
       child.on('error', e => { failed = e; });
     }
     const end = Date.now() + this.config.requestTimeoutMs;
     while (!port) {
+      this.lifetime.signal.throwIfAborted();
       if (failed) throw new Error(`浏览器启动失败：${failed.message}`);
       if (Date.now() > end) throw new Error('浏览器启动超时，请关闭 WeChat Dot 的登录窗口后重试。');
       try { [port, endpoint] = (await readFile(portFile, 'utf8')).trim().split('\n'); } catch { await delay(100); }
@@ -210,6 +211,7 @@ export class DotBrowser extends EventEmitter {
     await this.command('Browser.setWindowBounds', { windowId, bounds: { windowState: 'minimized' } }, true);
   }
   async dispose(): Promise<void> {
+    this.lifetime.abort();
     this.embedded?.destroy(); this.embedded = undefined;
     if (this.socket?.readyState === WebSocket.OPEN) await this.command('Browser.close', {}, true).catch(() => {});
     if (this.manualLogin) await this.stopManualBrowser();
