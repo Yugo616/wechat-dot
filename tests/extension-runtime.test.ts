@@ -19,12 +19,14 @@ test('a running connection sees complete settings and its token stays out of pag
   const path = join(destination, 'connection.json');
   await writeFile(path, JSON.stringify(previous));
   let finished = false;
-  const preparing = prepareExtension(source, destination, defaults.dot, next).finally(() => { finished = true; });
+  let writeError: unknown;
+  const preparing = prepareExtension(source, destination, defaults.dot, next).catch(error => { writeError = error; }).finally(() => { finished = true; });
   while (!finished) {
     const current = JSON.parse(await readFile(path, 'utf8'));
     assert.ok(JSON.stringify(current) === JSON.stringify(previous) || JSON.stringify(current) === JSON.stringify(next));
   }
   await preparing;
+  if (writeError) throw writeError;
   assert.deepEqual(JSON.parse(await readFile(path, 'utf8')), next);
   assert.equal((await readFile(join(destination, 'config.js'), 'utf8')).includes(next.token), false);
   assert.equal(JSON.parse(await readFile(join(destination, 'manifest.json'), 'utf8')).web_accessible_resources, undefined);

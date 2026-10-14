@@ -57,7 +57,8 @@ export class DotBrowser extends EventEmitter {
     await prepareBrowserIdentity(directory, this.config.identity);
     const extra = await this.loginArguments();
     this.lifetime.signal.throwIfAborted();
-    this.child = spawn(executable, [`--user-data-dir=${directory}`, '--no-first-run', '--no-default-browser-check', ...extra, '--new-window', this.config.homeUrl], { stdio: 'ignore' });
+    // On Windows, detach from Node's kill-on-parent-exit job. Normal quit still closes our profile explicitly.
+    this.child = spawn(executable, [`--user-data-dir=${directory}`, '--no-first-run', '--no-default-browser-check', ...extra, '--new-window', this.config.homeUrl], { stdio: 'ignore', detached: process.platform === 'win32', windowsHide: true });
     this.child.on('error', e => this.emit('problem', new Error(`浏览器启动失败：${e.message}`)));
   }
   protected async loginArguments(): Promise<string[]> { return []; }

@@ -34,7 +34,7 @@ export class ExtensionBrowser extends DotBrowser {
   private async prepareConnection(): Promise<void> {
     const directory = join(app.getPath('userData'), 'Browser Connection');
     const source = app.isPackaged ? join(process.resourcesPath, 'browser-connection') : join(app.getAppPath(), 'dist', 'extension');
-    await prepareExtension(source, directory, this.config, { port: this.link.port, token: this.token });
+    await prepareExtension(source, directory, this.config, { port: this.link.port, token: this.token }, this.lifetime.signal);
   }
   protected override async loginArguments(): Promise<string[]> {
     return [`--load-extension=${join(app.getPath('userData'), 'Browser Connection')}`, ...this.config.backgroundArguments];
