@@ -161,6 +161,12 @@ if (dotConfig.browser === 'extension') {
 await writeFile(join(data, 'config.json'), JSON.stringify({ weixin: { baseUrl: base, cdnUrl: base, retryDelayMs: 30, longPollTimeoutMs: 500 }, dot: dotConfig }));
 let desktop, browserPort;
 const launchDesktop = () => electron.launch({ ...(process.env.WECHAT_DOT_EXECUTABLE ? { executablePath: process.env.WECHAT_DOT_EXECUTABLE, args: [] } : { args: ['.'] }), env: { ...process.env, WECHAT_DOT_DATA: data } });
+async function browserProcesses() {
+  if (process.platform !== 'win32') return [];
+  const script = `Get-CimInstance Win32_Process -Filter "Name='chrome.exe'" | Where-Object { $_.CommandLine -and $_.CommandLine.Contains('--user-data-dir=' + $env:WECHAT_DOT_FIXTURE_PROFILE) -and !$_.CommandLine.Contains('--type=') } | ForEach-Object { $p = Get-Process -Id $_.ProcessId; [pscustomobject]@{ pid = $_.ProcessId; parent = $_.ParentProcessId; window = $p.MainWindowHandle.ToInt64() } } | ConvertTo-Json -Compress`;
+  const { stdout } = await promisify(execFile)('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', script], { env: { ...process.env, WECHAT_DOT_FIXTURE_PROFILE: join(data, browserProfile) } });
+  return stdout.trim() ? [JSON.parse(stdout)].flat() : [];
+}
 async function waitFor(test, label, timeout = 15000) { const end = Date.now() + timeout; while (!(await test())) { if (Date.now() > end) throw new Error(label); await new Promise(r => setTimeout(r, 50)); } }
 async function setupVisible() {
   return desktop.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().find(w => w.webContents.getURL().endsWith('/index.html')).isVisible());
@@ -259,6 +265,7 @@ try {
   let loginDocument;
   if (externalBrowser) {
     await waitFor(() => draftPolls > 0, 'The managed browser must download and open the login page', defaults.dot.runtime.downloadTimeoutMs + 60000);
+    if (process.platform === 'win32') await waitFor(async () => (await browserProcesses()).some(browser => browser.window !== 0), 'The login browser must have a visible Windows window');
     loginDocument = lastDraftPoll.document;
     await page.getByRole('button', { name: '登录完成，识别 dot' }).click();
   }
@@ -327,11 +334,6 @@ try {
   if (externalBrowser) {
     await waitFor(async () => JSON.parse(await readFile(join(data, 'state.json'), 'utf8')).outbound.find(job => job.id === 'proactive')?.phase === 'done', 'Proactive delivery was not saved before the crash test');
     const beforeCrashDocument = lastDraftPoll.document;
-    const browserProcesses = async () => {
-      if (process.platform !== 'win32') return [];
-      const script = `Get-CimInstance Win32_Process -Filter "Name='chrome.exe'" | Where-Object { $_.CommandLine -and $_.CommandLine.Contains('--user-data-dir=' + $env:WECHAT_DOT_FIXTURE_PROFILE) -and !$_.CommandLine.Contains('--type=') } | Select-Object ProcessId, ParentProcessId, CommandLine | ConvertTo-Json -Compress`;
-      return (await promisify(execFile)('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', script], { env: { ...process.env, WECHAT_DOT_FIXTURE_PROFILE: join(data, browserProfile) } })).stdout.trim();
-    };
     console.log('FIXTURE BEFORE APP CRASH', { document: beforeCrashDocument, processes: await browserProcesses() });
     const exited = once(desktop.process(), 'exit');
     await desktop.evaluate(({ app }) => { setTimeout(() => app.exit(0), 0); });
