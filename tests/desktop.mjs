@@ -327,15 +327,23 @@ try {
   if (externalBrowser) {
     await waitFor(async () => JSON.parse(await readFile(join(data, 'state.json'), 'utf8')).outbound.find(job => job.id === 'proactive')?.phase === 'done', 'Proactive delivery was not saved before the crash test');
     const beforeCrashDocument = lastDraftPoll.document;
+    const browserProcesses = async () => {
+      if (process.platform !== 'win32') return [];
+      const script = `Get-CimInstance Win32_Process -Filter "Name='chrome.exe'" | Where-Object { $_.CommandLine -and $_.CommandLine.Contains('--user-data-dir=' + $env:WECHAT_DOT_FIXTURE_PROFILE) -and !$_.CommandLine.Contains('--type=') } | Select-Object ProcessId, ParentProcessId, CommandLine | ConvertTo-Json -Compress`;
+      return (await promisify(execFile)('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', script], { env: { ...process.env, WECHAT_DOT_FIXTURE_PROFILE: join(data, browserProfile) } })).stdout.trim();
+    };
+    console.log('FIXTURE BEFORE APP CRASH', { document: beforeCrashDocument, processes: await browserProcesses() });
     const exited = once(desktop.process(), 'exit');
     await desktop.evaluate(({ app }) => { setTimeout(() => app.exit(0), 0); });
     await exited;
+    console.log('FIXTURE SURVIVING BROWSER', await browserProcesses());
     desktop = undefined;
     desktop = await launchDesktop();
     await (await desktop.firstWindow()).getByRole('button', { name: '暂停转发' }).waitFor({ timeout: 45000 });
     messages.push({ id: 'after-crash', account_user_id: 'dot-member', content: { text: '意外退出后继续' } });
     await waitFor(() => sent.length === 4, 'A surviving browser could not be reconnected after a crash');
     assert.equal(sent[3].item_list[0].text_item.text, '意外退出后继续');
+    console.log('FIXTURE AFTER APP CRASH', { document: lastDraftPoll.document, processes: await browserProcesses() });
     assert.equal(lastDraftPoll.document, beforeCrashDocument, 'App recovery must reuse the surviving authenticated document');
   }
   if (!extensionContext) {
