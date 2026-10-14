@@ -1,6 +1,6 @@
 {
   "name": "wechat-dot",
-  "version": "1.0.3",
+  "version": "1.0.4",
   "description": "在微信里和你的 dot 聊天。",
   "private": true,
   "license": "MIT",
@@ -60,6 +60,12 @@
       "THIRD_PARTY_NOTICES.md"
     ],
     "asar": true,
+    "extraResources": [
+      {
+        "from": "dist/extension",
+        "to": "browser-connection"
+      }
+    ],
     "artifactName": "wechat-dot-${version}-${os}-${arch}.${ext}",
     "mac": {
       "category": "public.app-category.social-networking",

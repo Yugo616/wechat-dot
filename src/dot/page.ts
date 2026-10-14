@@ -11,6 +11,16 @@ export async function dotPageAction(action: string, args: any = {}): Promise<any
   }
   if (action === 'url') return location.href;
   if (action === 'ready') return document.readyState === 'complete';
+  if (action === 'set-files') {
+    const input = (args.fileInputSelectors as string[]).map(s => document.querySelector<HTMLInputElement>(s)).find(Boolean);
+    if (!input) throw new Error('找不到 dot 的附件上传入口，请重连 dot。');
+    const transfer = new DataTransfer();
+    for (const file of args.files) transfer.items.add(new File([Uint8Array.from(atob(file.base64), c => c.charCodeAt(0))], file.name, { type: file.mime }));
+    input.files = transfer.files;
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    input.dispatchEvent(new Event('change', { bubbles: true }));
+    return;
+  }
   if (action === 'transcribe') {
     const url = new URL(args.url, location.href);
     if (url.origin !== location.origin) throw new Error('语音转写必须使用当前 ChatGPT 会话。');

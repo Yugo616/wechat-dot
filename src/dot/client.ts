@@ -22,7 +22,7 @@ export class DotClient extends EventEmitter {
   private uploading?: { requests: Set<string>; ids: string[]; expected: number; resolve: (ids: string[]) => void; reject: (error: Error) => void };
   constructor(readonly config: Config['dot']) { super(); this.prefix = config.apiPrefixes[0]; }
   get isOpening(): boolean { return Boolean(this.opening); }
-  private createBrowser(): DotBrowser { return this.config.browser === 'extension' ? new ExtensionBrowser(this.config) : new DotBrowser(this.config); }
+  private createBrowser(): DotBrowser { return this.config.browser === 'embedded' ? new DotBrowser(this.config) : new ExtensionBrowser(this.config); }
 
   async login(): Promise<boolean> {
     await this.dispose(); this.profile = undefined;
@@ -32,8 +32,14 @@ export class DotClient extends EventEmitter {
   async finishLogin(): Promise<void> {
     if (this.opening) await this.opening;
     if (!this.window?.manualLogin) return;
-    const closing = this.dispose();
-    const transition = this.opening = closing.then(async () => {
+    const browser = this.window;
+    const transition = this.opening = Promise.resolve().then(async () => {
+      const reused = await browser.finishLogin?.();
+      if (this.window !== browser) throw new Error('ChatGPT 浏览器已关闭。');
+      if (reused) return;
+      const closing = this.dispose();
+      this.opening = transition;
+      await closing;
       if (this.opening !== transition) throw new Error('ChatGPT 浏览器已关闭。');
       await this.openBrowser(browser => browser.open(false));
     });

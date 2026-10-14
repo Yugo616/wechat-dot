@@ -1,7 +1,7 @@
 import { _electron as electron, chromium } from 'playwright-core';
 import { createServer } from 'node:http';
 import { once } from 'node:events';
-import { mkdtemp, readFile, writeFile, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, readlink, writeFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import assert from 'node:assert/strict';
@@ -103,7 +103,7 @@ const server = createServer(async (req, res) => {
     const file = uploadedFiles.get(url.pathname.split('/').at(-1));
     res.setHeader('Content-Type', file.mime_type); return res.end(file.bytes);
   }
-  if (url.pathname === '/fixture/draft') { draftPolls++; lastDraftPoll = { at: new Date().toISOString(), attachment: draftAttachment }; return res.end(JSON.stringify({attachment:draftAttachment})); }
+  if (url.pathname === '/fixture/draft') { draftPolls++; lastDraftPoll = { at: new Date().toISOString(), attachment: draftAttachment, document: url.searchParams.get('document'), title: url.searchParams.get('title') }; return res.end(JSON.stringify({attachment:draftAttachment})); }
   if (url.pathname === '/api/auth/session') {
     sessionRequests++;
     await sessionGate;
@@ -133,10 +133,10 @@ const server = createServer(async (req, res) => {
   }
   res.setHeader('Content-Type', 'text/html; charset=utf-8');
   res.end(`<!doctype html><form><span id="attachment"><button type="button" aria-label="Remove file">private-draft.png</button></span><input type="file" multiple onchange="uploadFiles(this.files)"><div contenteditable="true" role="textbox" aria-label="訊息" style="min-height:32px">${legacyDraft ? '旧版留下的消息<div><br></div><div>下一段仍要保留。</div>' : ''}</div><button type="button" aria-label="傳送" disabled onclick="send()">傳送</button></form><script>
-    let files=[];
+    let files=[]; const loginDocument=crypto.randomUUID();
     document.querySelector('[contenteditable]').addEventListener('input',()=>{const button=document.querySelector('[aria-label="傳送"]');button.disabled=true;setTimeout(()=>{button.disabled=false;},250);});
     async function uploadFiles(picked){document.querySelector('[aria-label="傳送"]').disabled=true;const previews=document.createElement('span');previews.id='upload-previews';document.querySelector('form').append(previews);for(const file of picked){const image=document.createElement('img');image.src=URL.createObjectURL(file);image.style.height='24px';previews.append(image);const remove=document.createElement('button');remove.type='button';remove.setAttribute('aria-label','Remove file');previews.append(remove);}try{for(const file of picked){const data=new FormData();data.append('file',file);const uploaded=await fetch('/backend-api/messaging/rooms/room/files',{method:'POST',body:data}).then(r=>{if(!r.ok)throw Error('Upload failed');return r.json();});files.push({type:'file',file_id:uploaded.id});}document.querySelector('[aria-label="傳送"]').disabled=false;}catch{}}
-    setInterval(async()=>{const s=await fetch("/fixture/draft").then(r=>r.json());if(!s.attachment)document.getElementById("attachment")?.remove();},50);
+    setInterval(async()=>{const s=await fetch("/fixture/draft?"+new URLSearchParams({document:loginDocument,title:document.title})).then(r=>r.json());if(!s.attachment)document.getElementById("attachment")?.remove();},50);
     async function send(){const composer=document.querySelector('[contenteditable]');const text=composer.innerText;const request_id=crypto.randomUUID();await fetch('/backend-api/messaging/rooms/room/messages',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer fixture-chatgpt','ChatGPT-Account-Id':'fixture-account'},body:JSON.stringify({content:{text,attachments:files},request_id,idempotency_token:request_id})});composer.innerText='';files=[];document.querySelector('input[type=file]').value='';document.getElementById('upload-previews')?.remove();}
   </script>`);
 }).listen(0, '127.0.0.1');
@@ -148,11 +148,12 @@ const browserMode = process.env.WECHAT_DOT_TEST_BROWSER ?? 'embedded';
 const externalBrowser = ['external', 'default'].includes(browserMode);
 const dotConfig = { ...(browserMode === 'default' ? {} : { browser: browserMode }), homeUrl: base + '/', pollIntervalMs: 50, sendTimeoutMs: 4000 };
 let extensionContext;
-if (dotConfig.browser === 'extension') {
-  const defaults = JSON.parse(await readFile('config/defaults.json', 'utf8'));
+if (externalBrowser || dotConfig.browser === 'extension') {
   const portProbe = createTcpServer().listen(0, '127.0.0.1'); await once(portProbe, 'listening');
   const port = portProbe.address().port; await new Promise(resolve => portProbe.close(resolve));
   dotConfig.extension = { ...defaults.dot.extension, port };
+}
+if (dotConfig.browser === 'extension') {
   const directory = join(data, 'extension'); await buildExtension(directory, dotConfig);
   extensionContext = await chromium.launchPersistentContext(join(data, 'browser'), { channel: 'chromium', executablePath: process.env.WECHAT_DOT_TEST_CHROME, headless: true,
     args: [`--disable-extensions-except=${directory}`, `--load-extension=${directory}`] });
@@ -170,18 +171,17 @@ async function reopenSetup() {
 }
 async function closeManagedBrowser(targetOnly = false) {
   if (externalBrowser) {
-    browserPort = (await readFile(join(data, browserProfile, 'DevToolsActivePort'), 'utf8')).split('\n')[0];
-    const browser = await chromium.connectOverCDP(`http://127.0.0.1:${browserPort}`);
-    if (targetOnly) {
-      const context = browser.contexts()[0];
-      const target = context.pages().find(p => p.url().startsWith(base));
-      await context.newPage();
-      await target.close();
+    const profile = join(data, browserProfile);
+    if (process.platform === 'win32') {
+      const script = `Get-CimInstance Win32_Process -Filter "Name='chrome.exe'" | Where-Object { $_.CommandLine -and $_.CommandLine.Contains('--user-data-dir=' + $env:WECHAT_DOT_FIXTURE_PROFILE) -and !$_.CommandLine.Contains('--type=') } | ForEach-Object { & taskkill /PID $_.ProcessId /T /F | Out-Null }`;
+      await promisify(execFile)('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', script], { env: { ...process.env, WECHAT_DOT_FIXTURE_PROFILE: profile } });
     } else {
-      const session = await browser.newBrowserCDPSession();
-      await session.send('Browser.close').catch(() => {});
+      const lock = await readlink(join(profile, 'SingletonLock'));
+      const pid = Number(lock.slice(lock.lastIndexOf('-') + 1));
+      const { stdout } = await promisify(execFile)('ps', ['-p', String(pid), '-o', 'args=']);
+      assert.ok(stdout.includes(`--user-data-dir=${profile}`));
+      process.kill(pid, 'SIGTERM');
     }
-    await browser.close();
   } else {
     await desktop.evaluate(({ BrowserWindow }, origin) => {
       BrowserWindow.getAllWindows().find(w => w.webContents.getURL().startsWith(origin)).destroy();
@@ -256,8 +256,10 @@ try {
     await popup.locator('#detail').filter({ hasText: '已连接' }).waitFor();
     await popup.close();
   }
+  let loginDocument;
   if (externalBrowser) {
     await waitFor(() => draftPolls > 0, 'The managed browser must download and open the login page', defaults.dot.runtime.downloadTimeoutMs + 60000);
+    loginDocument = lastDraftPoll.document;
     await page.getByRole('button', { name: '登录完成，识别 dot' }).click();
   }
   await page.locator('#dot-badge[data-status="ready"]').waitFor({timeout:45000});
@@ -268,13 +270,9 @@ try {
     documentId = await managedPage.evaluate(() => { history.pushState({}, '', '/dots/home'); return window.fixtureDocumentId = crypto.randomUUID(); });
   }
   if (externalBrowser) {
-    browserPort = (await readFile(join(data, browserProfile, 'DevToolsActivePort'), 'utf8')).split('\n')[0];
-    const browser = await chromium.connectOverCDP(`http://127.0.0.1:${browserPort}`);
-    try {
-      const branded = browser.contexts()[0].pages().find(p => p.url().startsWith(base));
-      await branded.getByText('WeChat Dot 专用', { exact: true }).waitFor();
-      assert.equal(await branded.title(), 'WeChat Dot 专用 · ChatGPT');
-    } finally { await browser.close(); }
+    await waitFor(() => lastDraftPoll.title === 'WeChat Dot 专用 · ChatGPT', 'The dedicated browser must stay visibly identified');
+    assert.equal(lastDraftPoll.document, loginDocument, 'Finishing login must preserve the authenticated document');
+    await assert.rejects(readFile(join(data, browserProfile, 'DevToolsActivePort')), { code: 'ENOENT' });
   }
   if (!extensionContext) {
     await closeManagedBrowser();
@@ -328,7 +326,7 @@ try {
   assert.equal(sent[2].item_list[0].text_item.text, '主动问候');
   if (externalBrowser) {
     await waitFor(async () => JSON.parse(await readFile(join(data, 'state.json'), 'utf8')).outbound.find(job => job.id === 'proactive')?.phase === 'done', 'Proactive delivery was not saved before the crash test');
-    browserPort = (await readFile(join(data, browserProfile, 'DevToolsActivePort'), 'utf8')).split('\n')[0];
+    const beforeCrashDocument = lastDraftPoll.document;
     const exited = once(desktop.process(), 'exit');
     await desktop.evaluate(({ app }) => { setTimeout(() => app.exit(0), 0); });
     await exited;
@@ -338,6 +336,7 @@ try {
     messages.push({ id: 'after-crash', account_user_id: 'dot-member', content: { text: '意外退出后继续' } });
     await waitFor(() => sent.length === 4, 'A surviving browser could not be reconnected after a crash');
     assert.equal(sent[3].item_list[0].text_item.text, '意外退出后继续');
+    assert.equal(lastDraftPoll.document, beforeCrashDocument, 'App recovery must reuse the surviving authenticated document');
   }
   if (!extensionContext) {
     const start = sent.length;

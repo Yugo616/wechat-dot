@@ -163,6 +163,18 @@ test('discovery waits until the manual login browser finishes closing', async ()
   assert.equal(fixture.automatic.counts().opens, 1);
 });
 
+test('finishing a connected login keeps the authenticated browser and document alive', async () => {
+  const fixture = setup();
+  fixture.browser.manualLogin = true; fixture.release();
+  await fixture.client.login();
+  (fixture.browser as any).finishLogin = async () => { fixture.browser.manualLogin = false; return true; };
+  (fixture.client as any).createBrowser = () => { throw Error('The authenticated browser must not be replaced'); };
+  await fixture.client.finishLogin();
+  assert.equal((await fixture.client.discover()).roomId, 'room');
+  assert.equal(fixture.counts().closes, 0);
+  assert.equal(fixture.counts().opens, 1);
+});
+
 test('disposing during login handoff prevents a late automatic browser', async () => {
   const fixture = await manualHandoff();
   const finishing = fixture.client.finishLogin().catch(e => e);

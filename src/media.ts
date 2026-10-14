@@ -8,7 +8,7 @@ import { MessageContentError } from './errors';
 export { MessageContentError } from './errors';
 
 const extensions: Record<string, string> = { png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', gif: 'image/gif', webp: 'image/webp', pdf: 'application/pdf', txt: 'text/plain', md: 'text/markdown', csv: 'text/csv', json: 'application/json', zip: 'application/zip', wav: 'audio/wav', silk: 'audio/silk', docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' };
-function contentType(bytes: Buffer, name: string): string {
+export function contentType(bytes: Buffer, name: string): string {
   if (bytes.subarray(0, 8).equals(Buffer.from('89504e470d0a1a0a', 'hex'))) return 'image/png';
   if (bytes.subarray(0, 3).equals(Buffer.from('ffd8ff', 'hex'))) return 'image/jpeg';
   if (bytes.toString('ascii', 0, 3) === 'GIF') return 'image/gif';

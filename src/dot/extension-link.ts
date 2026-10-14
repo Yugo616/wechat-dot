@@ -8,13 +8,13 @@ export class ExtensionLink extends EventEmitter {
   private heartbeat?: ReturnType<typeof setInterval>;
   private sequence = 0;
   private pending = new Map<number, { resolve: (value: any) => void; reject: (e: Error) => void; timer: ReturnType<typeof setTimeout> }>();
-  constructor(readonly config: { port: number; origin: string; heartbeatMs: number; maxPayloadBytes: number }, readonly timeoutMs: number) { super(); }
+  constructor(readonly config: { port: number; origin: string; token?: string; heartbeatMs: number; maxPayloadBytes: number }, readonly timeoutMs: number) { super(); }
   get connected(): boolean { return this.socket?.readyState === WebSocket.OPEN; }
   get port(): number { const address = this.server?.address(); return typeof address === 'object' && address ? address.port : this.config.port; }
   async start(): Promise<void> {
     if (this.server) return;
     const server = this.server = new WebSocketServer({ host: '127.0.0.1', port: this.config.port, maxPayload: this.config.maxPayloadBytes,
-      verifyClient: (info: { origin: string }) => info.origin === this.config.origin });
+      verifyClient: (info: { origin: string; req: { url?: string } }) => info.origin === this.config.origin && (!this.config.token || info.req.url === `/connect/${this.config.token}`) });
     server.on('connection', socket => {
       if (this.connected) { socket.close(1008, '已有浏览器连接'); return; }
       this.socket = socket;
@@ -29,7 +29,7 @@ export class ExtensionLink extends EventEmitter {
       socket.on('close', () => {
         if (this.socket !== socket) return;
         this.socket = undefined;
-        for (const pending of this.pending.values()) { clearTimeout(pending.timer); pending.reject(new Error('Chrome 扩展已断开，请打开 Chrome 并连接扩展。')); }
+        for (const pending of this.pending.values()) { clearTimeout(pending.timer); pending.reject(new Error('ChatGPT 浏览器已断开，正在恢复。')); }
         this.pending.clear(); this.emit('disconnected');
       });
       this.emit('connected');
@@ -38,11 +38,22 @@ export class ExtensionLink extends EventEmitter {
     this.heartbeat = setInterval(() => { if (this.connected) this.socket!.send('{"type":"ping"}'); }, this.config.heartbeatMs);
     this.heartbeat.unref();
   }
+  async waitForConnection(signal: AbortSignal): Promise<void> {
+    signal.throwIfAborted();
+    if (this.connected) return;
+    const timeout = AbortSignal.timeout(this.timeoutMs);
+    try { await once(this, 'connected', { signal: AbortSignal.any([signal, timeout]) }); }
+    catch (error) {
+      signal.throwIfAborted();
+      if (timeout.aborted) throw new Error('专用浏览器连接超时，请重连 dot。');
+      throw error;
+    }
+  }
   request(action: string, args: any = {}): Promise<any> {
-    if (!this.connected) return Promise.reject(new Error('请在 Chrome 的 WeChat Dot 扩展里点击「连接 dot」。'));
+    if (!this.connected) return Promise.reject(new Error('ChatGPT 浏览器已断开，正在恢复。'));
     return new Promise((resolve, reject) => {
       const id = ++this.sequence;
-      const timer = setTimeout(() => { this.pending.delete(id); reject(new Error('Chrome 扩展响应超时，请打开 dot 标签页检查。')); }, this.timeoutMs);
+      const timer = setTimeout(() => { this.pending.delete(id); reject(new Error('ChatGPT 页面响应超时，请重连 dot。')); }, this.timeoutMs + (args.args?.timeoutMs ?? 0));
       this.pending.set(id, { resolve, reject, timer });
       this.socket!.send(JSON.stringify({ id, action, args }));
     });

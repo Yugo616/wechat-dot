@@ -16,13 +16,25 @@ export class DotBrowser extends EventEmitter {
   private sessionId?: string;
   private targetId?: string;
   private child?: ChildProcess;
-  private lifetime = new AbortController();
+  protected lifetime = new AbortController();
   manualLogin = false;
   private sequence = 0;
   private pending = new Map<number, { resolve: (v: any) => void; reject: (e: Error) => void; timer: ReturnType<typeof setTimeout> }>();
   constructor(readonly config: Config['dot']) { super(); }
-  private get directory(): string { return join(app.getPath('userData'), this.config.runtime.profileDirectory); }
-  private async stopManualBrowser(): Promise<void> {
+  protected get directory(): string { return join(app.getPath('userData'), this.config.runtime.profileDirectory); }
+  protected async hasOwnedBrowser(): Promise<boolean> {
+    if (process.platform === 'win32') {
+      const script = `Get-CimInstance Win32_Process -Filter "Name='chrome.exe' OR Name='msedge.exe'" | Where-Object { $_.CommandLine -and $_.CommandLine.Contains('--user-data-dir=' + $env:WECHAT_DOT_BROWSER_PROFILE) -and !$_.CommandLine.Contains('--type=') } | Select-Object -ExpandProperty ProcessId`;
+      return new Promise<boolean>(resolve => execFile('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', script], { windowsHide: true, env: { ...process.env, WECHAT_DOT_BROWSER_PROFILE: this.directory } }, (error, stdout) => resolve(!error && Boolean(stdout.trim()))));
+    }
+    try {
+      const lock = await readlink(join(this.directory, 'SingletonLock'));
+      const pid = Number(lock.slice(lock.lastIndexOf('-') + 1));
+      const command = await new Promise<string>((resolve, reject) => execFile('ps', ['-p', String(pid), '-o', 'args='], (error, stdout) => error ? reject(error) : resolve(stdout)));
+      return command.includes(`--user-data-dir=${this.directory} --`);
+    } catch { return false; }
+  }
+  protected async stopManualBrowser(): Promise<void> {
     if (process.platform === 'win32') {
       const script = `$browsers = Get-CimInstance Win32_Process -Filter "Name='chrome.exe' OR Name='msedge.exe'" | Where-Object { $_.CommandLine -and $_.CommandLine.Contains('--user-data-dir=' + $env:WECHAT_DOT_BROWSER_PROFILE) -and !$_.CommandLine.Contains('--type=') }; foreach ($browser in $browsers) { $p = Get-Process -Id $browser.ProcessId -ErrorAction SilentlyContinue; if ($p) { $closed = $p.CloseMainWindow(); if ($closed) { [void]$p.WaitForExit(2000) }; if (!$p.HasExited) { & taskkill /PID $browser.ProcessId /T /F | Out-Null } } }`;
       await new Promise<void>((resolve, reject) => execFile('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', script], { windowsHide: true, env: { ...process.env, WECHAT_DOT_BROWSER_PROFILE: this.directory } }, error => error ? reject(new Error('请关闭 WeChat Dot 的专用浏览器窗口，再点登录完成。')) : resolve()));
@@ -43,10 +55,13 @@ export class DotBrowser extends EventEmitter {
     const directory = this.directory;
     await mkdir(directory, { recursive: true, mode: 0o700 });
     await prepareBrowserIdentity(directory, this.config.identity);
+    const extra = await this.loginArguments();
     this.lifetime.signal.throwIfAborted();
-    this.child = spawn(executable, [`--user-data-dir=${directory}`, '--no-first-run', '--no-default-browser-check', '--new-window', this.config.homeUrl], { stdio: 'ignore' });
+    this.child = spawn(executable, [`--user-data-dir=${directory}`, '--no-first-run', '--no-default-browser-check', ...extra, '--new-window', this.config.homeUrl], { stdio: 'ignore' });
     this.child.on('error', e => this.emit('problem', new Error(`浏览器启动失败：${e.message}`)));
   }
+  protected async loginArguments(): Promise<string[]> { return []; }
+  async finishLogin(): Promise<boolean> { return false; }
   private async executable(): Promise<string | undefined> {
     if (this.config.browser === 'embedded') return;
     return ensureBrowser(this.config.runtime, join(app.getPath('userData'), 'Browser Runtime'), {

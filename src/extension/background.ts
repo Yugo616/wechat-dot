@@ -1,7 +1,7 @@
-import defaults from '../../config/defaults.json';
+import { config } from './config';
 import { dotPageAction, pageResult } from '../dot/page';
+import { markDedicatedPage } from '../dot/page-identity';
 
-const config = defaults.dot;
 let socket: WebSocket | undefined;
 let connecting: Promise<void> | undefined;
 let tabId: number | undefined;
@@ -10,7 +10,8 @@ async function dotTab(active = false): Promise<chrome.tabs.Tab> {
   tabId ??= (await chrome.storage.session.get('dotTab')).dotTab as number | undefined;
   let tab = tabId === undefined ? undefined : await chrome.tabs.get(tabId).catch(() => undefined);
   if (!tab || !tab.url?.startsWith(new URL(config.homeUrl).origin + '/')) {
-    tab = await chrome.tabs.create({ url: config.homeUrl, active });
+    tab = (config.browser !== 'extension' ? (await chrome.tabs.query({ url: new URL(config.homeUrl).origin + '/*' }))[0] : undefined)
+      ?? await chrome.tabs.create({ url: config.homeUrl, active });
     tabId = tab.id;
     await chrome.storage.session.set({ dotTab: tabId });
   } else if (active) await chrome.tabs.update(tab.id!, { active: true });
@@ -21,11 +22,13 @@ async function dotTab(active = false): Promise<chrome.tabs.Tab> {
     await new Promise(resolve => setTimeout(resolve, 100));
     tab = await chrome.tabs.get(tab.id!);
   }
+  if (config.browser !== 'extension') await chrome.scripting.executeScript({ target: { tabId: tab.id! }, world: 'MAIN', func: markDedicatedPage, args: [config.identity] });
   return tab;
 }
 async function handle(action: string, args: any): Promise<any> {
   const tab = await dotTab(action === 'show');
   if (action === 'show') return;
+  if (action === 'hide') { await chrome.windows.update(tab.windowId, { state: 'minimized' }); return; }
   if (action === 'navigate') {
     if (new URL(args.url).origin !== new URL(config.homeUrl).origin) throw new Error('只能打开 ChatGPT。');
     await chrome.tabs.update(tab.id!, { url: args.url });
@@ -40,7 +43,9 @@ async function connect(): Promise<void> {
   if (socket?.readyState === WebSocket.OPEN) return;
   if (connecting) return connecting;
   connecting = (async () => {
-    const ws = socket = new WebSocket(`ws://127.0.0.1:${config.extension.port}`);
+    // Re-read after an app restart; a surviving browser keeps its login and tab.
+    const connection = await (await fetch(chrome.runtime.getURL('connection.json'), { cache: 'no-store' })).json();
+    const ws = socket = new WebSocket(`ws://127.0.0.1:${connection.port}${connection.token ? `/connect/${connection.token}` : ''}`);
     ws.onmessage = async event => {
       const request = JSON.parse(event.data);
       if (request.type === 'ping') { ws.send('{"type":"pong"}'); return; }
@@ -49,7 +54,11 @@ async function connect(): Promise<void> {
         if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ id: request.id, result }));
       } catch (e) { if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ id: request.id, error: (e as Error).message, errorName: (e as Error).name })); }
     };
-    ws.onclose = () => { if (socket === ws) socket = undefined; void chrome.action.setBadgeText({ text: '' }); };
+    ws.onclose = () => {
+      if (socket === ws) socket = undefined;
+      void chrome.action.setBadgeText({ text: '' });
+      if (config.browser !== 'extension') setTimeout(() => { void resume(); }, config.pollIntervalMs);
+    };
     await new Promise<void>((resolve, reject) => {
       ws.onopen = () => { void chrome.action.setBadgeText({ text: 'ON' }); resolve(); };
       ws.onerror = () => { ws.close(); reject(new Error('先打开 WeChat Dot，再点程序里的「连接 Chrome」。')); };
@@ -72,8 +81,13 @@ chrome.runtime.onMessage.addListener((message, sender, respond) => {
   })().then(respond, e => respond({ error: e.message }));
   return true;
 });
-async function resume(): Promise<void> { if ((await chrome.storage.local.get('enabled')).enabled) await connect().catch(() => {}); }
+async function resume(): Promise<void> { if (config.browser !== 'extension' || (await chrome.storage.local.get('enabled')).enabled) await connect().catch(() => {}); }
 chrome.runtime.onStartup.addListener(() => { void resume(); });
+chrome.tabs.onRemoved.addListener(id => {
+  if (id !== tabId) return;
+  tabId = undefined; void chrome.storage.session.remove('dotTab');
+  if (socket?.readyState === WebSocket.OPEN) socket.send(JSON.stringify({ type: 'event', method: 'Page.closed', params: {} }));
+});
 chrome.alarms.onAlarm.addListener(alarm => { if (alarm.name === 'reconnect') void resume(); });
 void chrome.alarms.create('reconnect', { periodInMinutes: 1 });
 void resume();

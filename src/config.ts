@@ -7,9 +7,14 @@ export async function loadConfig(appDirectory: string, userDirectory: string): P
   let custom: Partial<Config> = {};
   try { custom = JSON.parse(await readFile(join(userDirectory, 'config.json'), 'utf8')); }
   catch (e) { if ((e as NodeJS.ErrnoException).code !== 'ENOENT') throw new Error('config.json 格式有误，请检查配置。'); }
+  const storage = { ...base.storage, ...custom.storage };
+  const dot = { ...base.dot, ...custom.dot };
+  dot.extension = { ...base.dot.extension, ...custom.dot?.extension };
+  // A downloaded file is returned as base64 plus JSON metadata over the local connection.
+  dot.extension.maxPayloadBytes = Math.max(dot.extension.maxPayloadBytes, Math.ceil(storage.maxMediaBytes * 4 / 3) + 65536);
   return {
     desktop: { ...base.desktop, ...custom.desktop },
-    weixin: { ...base.weixin, ...custom.weixin }, dot: { ...base.dot, ...custom.dot },
-    storage: { ...base.storage, ...custom.storage }, updates: { ...base.updates, ...custom.updates }
+    weixin: { ...base.weixin, ...custom.weixin }, dot,
+    storage, updates: { ...base.updates, ...custom.updates }
   };
 }
