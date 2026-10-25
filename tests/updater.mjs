@@ -13,6 +13,7 @@ import { buildBlockMap } from 'app-builder-lib/out/targets/blockmap/blockmap.js'
 import assert from 'node:assert/strict';
 
 const exec = promisify(execFile), mac = process.platform === 'darwin';
+const shellEnv = Object.fromEntries(Object.entries(process.env).filter(([key]) => key.toLowerCase() !== 'psmodulepath'));
 const native = process.env.WECHAT_DOT_UPDATE_NATIVE === '1';
 const pkg = JSON.parse(await readFile('package.json', 'utf8'));
 const root = await mkdtemp(join(tmpdir(), 'wechat-dot-updater-'));
@@ -115,13 +116,17 @@ try {
   }, 'Installed app did not become the new version', 90000);
   if (mac) await waitFor(async () => !(await readdir(apps)).some(n => n.startsWith('.wechat-dot-update-')), 'New app did not start and acknowledge update cleanup');
   else await waitFor(async () => {
-    const result = await exec('powershell.exe', ['-NoProfile', '-Command', 'Get-CimInstance Win32_Process | Where-Object { $_.ExecutablePath -eq $env:WECHAT_DOT_FIXTURE_EXE } | ForEach-Object { $p = Get-Process -Id $_.ProcessId -ErrorAction SilentlyContinue; if ($p.MainWindowTitle) { $p.Id } }'], { env: { ...process.env, WECHAT_DOT_FIXTURE_EXE: await realpath(executable) } });
+    const result = await exec('powershell.exe', ['-NoProfile', '-Command', '$ErrorActionPreference = "Stop"; Get-CimInstance Win32_Process | Where-Object { $_.ExecutablePath -eq $env:WECHAT_DOT_FIXTURE_EXE } | ForEach-Object { $p = Get-Process -Id $_.ProcessId -ErrorAction SilentlyContinue; if ($p.MainWindowTitle) { $p.Id } }'], { env: { ...shellEnv, WECHAT_DOT_FIXTURE_EXE: await realpath(executable) } });
     return Boolean(result.stdout.trim());
   }, 'Updated Windows app did not open its window');
   assert.deepEqual(JSON.parse(await readFile(join(data, 'state.json'), 'utf8')), initial);
   console.log('PASS: update installed, restarted, and preserved paused state, saved cursor, pending message and exit preference.');
 } catch (error) {
   console.error('Update fixture failed in', root, error);
+  if (!mac) {
+    const diagnostic = await exec('powershell.exe', ['-NoProfile', '-Command', 'Get-CimInstance Win32_Process | Where-Object { $_.Name -eq "WeChat Dot.exe" -or $_.CommandLine -like "*wechat-dot-updater-*" } | Select-Object ProcessId,ExecutablePath,CommandLine | ConvertTo-Json'], { env: shellEnv }).catch(error => ({ stdout: String(error) }));
+    console.error('Windows update processes:', diagnostic.stdout);
+  }
   if (mac) for (const name of await readdir(apps)) {
     if (!name.startsWith('.wechat-dot-update-')) continue;
     const folder = join(apps, name);
@@ -141,7 +146,7 @@ try {
       }
     }
     await waitFor(() => owned.every(pid => { try { process.kill(pid, 0); return false; } catch { return true; } }), 'Fixture app did not finish quitting');
-  } else await exec('powershell.exe', ['-NoProfile', '-Command', 'Get-CimInstance Win32_Process | Where-Object { $_.ExecutablePath -eq $env:WECHAT_DOT_FIXTURE_EXE } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue; Wait-Process -Id $_.ProcessId -Timeout 10 -ErrorAction SilentlyContinue }'], { env: { ...process.env, WECHAT_DOT_FIXTURE_EXE: await realpath(executable) } });
+  } else await exec('powershell.exe', ['-NoProfile', '-Command', 'Get-CimInstance Win32_Process | Where-Object { $_.ExecutablePath -eq $env:WECHAT_DOT_FIXTURE_EXE } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue; Wait-Process -Id $_.ProcessId -Timeout 10 -ErrorAction SilentlyContinue }'], { env: { ...shellEnv, WECHAT_DOT_FIXTURE_EXE: await realpath(executable) } });
   if (server) { server.closeAllConnections(); server.close(); }
   await rm(root, { recursive: true, force: true, maxRetries: 3 }); await rm(cache, { recursive: true, force: true, maxRetries: 3 });
 }
