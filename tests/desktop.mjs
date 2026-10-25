@@ -146,7 +146,8 @@ const defaults = JSON.parse(await readFile('config/defaults.json', 'utf8'));
 const browserProfile = defaults.dot.runtime.profileDirectory;
 const browserMode = process.env.WECHAT_DOT_TEST_BROWSER ?? 'embedded';
 const externalBrowser = ['external', 'default'].includes(browserMode);
-const dotConfig = { ...(browserMode === 'default' ? {} : { browser: browserMode }), homeUrl: base + '/', pollIntervalMs: 50, sendTimeoutMs: 4000 };
+// Let an interrupted page request time out and retry within the fixture's 15 s deadline.
+const dotConfig = { ...(browserMode === 'default' ? {} : { browser: browserMode }), homeUrl: base + '/', pollIntervalMs: 50, requestTimeoutMs: 4000, sendTimeoutMs: 4000 };
 let extensionContext;
 if (externalBrowser || dotConfig.browser === 'extension') {
   const portProbe = createTcpServer().listen(0, '127.0.0.1'); await once(portProbe, 'listening');
