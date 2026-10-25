@@ -26,8 +26,9 @@ try {
     let content;
     if (path.endsWith(`/${file}`)) content = corrupt ? Buffer.alloc(bytes.length) : bytes;
     else if (path.endsWith(`/${file}.blockmap`)) content = await readFile(asset + '.blockmap');
-    else if (path.endsWith('.blockmap')) content = await readFile(join(root, 'old.blockmap'));
+    else if (path.endsWith('.blockmap')) content = await readFile(join(root, 'old.blockmap')).catch(() => undefined);
     else { res.writeHead(404); return res.end(); }
+    if (!content) { res.writeHead(404); return res.end(); }
     if (req.headers.range) {
       const match = /^bytes=(\d+)-(\d+)$/.exec(req.headers.range); assert.ok(match);
       const start = Number(match[1]), end = Number(match[2]); ranged++; transferred += end - start + 1;

@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { StateStore } from '../src/state';
 
-async function controller(t: any, directory?: string) {
+async function controller(t: any, directory?: string, isPackaged = false) {
   const module = await import('../src/controller.js').catch((error: any) => {
     if (error.code === 'ERR_MODULE_NOT_FOUND') return undefined;
     throw error;
@@ -17,15 +17,32 @@ async function controller(t: any, directory?: string) {
   const engine = Object.assign(new EventEmitter(), { checkForUpdates: async () => {}, downloadUpdate: async () => [], quitAndInstall: () => {}, setFeedURL: () => {} });
   const core = await module.createController({
     appDirectory: process.cwd(), userDirectory: data, resourcesDirectory: join(process.cwd(), 'dist'),
-    executablePath: process.execPath, version: '1.2.0', isPackaged: false,
+    executablePath: process.execPath, version: '1.2.0', isPackaged,
     createUpdater: () => engine as any,
     publish: (value: any) => events.push({ name: 'status', value }),
     show: () => { events.push({ name: 'show' }); }, hide: () => { events.push({ name: 'hide' }); }, quit: () => { events.push({ name: 'quit' }); },
     openPath: async () => {}, openExternal: async () => {}
   });
   t.after(async () => { await core.close(); if (!directory) await rm(data, { recursive: true, force: true }); });
-  return { core, data, events };
+  return { core, data, events, engine };
 }
+
+test('a rejected asynchronous Windows installer remains ready to retry without quitting', async t => {
+  const platform = Object.getOwnPropertyDescriptor(process, 'platform')!;
+  Object.defineProperty(process, 'platform', { value: 'win32' });
+  try {
+    const { core, engine, events } = await controller(t, undefined, true);
+    let attempts = 0;
+    engine.quitAndInstall = async () => { if (++attempts === 1) throw new Error('spawn EACCES'); };
+    engine.emit('update-downloaded', { version: '1.3.0', downloadedFile: 'fixture.exe' });
+    await core.action('install-update');
+    assert.equal(core.status().update?.phase, 'ready');
+    assert.match(core.status().update?.message ?? '', /spawn EACCES/);
+    assert.equal(events.some(event => event.name === 'quit'), false);
+    assert.equal(core.status().running, false);
+    await core.action('install-update'); assert.equal(attempts, 2);
+  } finally { Object.defineProperty(process, 'platform', platform); }
+});
 
 test('new desktop starts paused and exit choice persists without forwarding', async t => {
   const { core, data, events } = await controller(t);

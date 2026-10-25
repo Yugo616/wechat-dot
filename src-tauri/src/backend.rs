@@ -1,9 +1,9 @@
 use std::{collections::HashMap, io::{BufRead, BufReader, Write}, path::PathBuf, process::{Child, ChildStdin, Command, Stdio}, sync::{Arc, Mutex, atomic::{AtomicU64, Ordering}}, time::Duration};
 use serde_json::{json, Value};
-use tauri::{AppHandle, Emitter, Manager};
+use tauri::{AppHandle, Manager};
 use tokio::sync::oneshot;
 use crate::desktop;
-use crate::lifecycle::ExitGate;
+use crate::lifecycle::{ExitGate, disconnected_status};
 
 type Reply = oneshot::Sender<Result<Value, String>>;
 struct Process { child: Option<Child>, input: Option<ChildStdin>, pending: HashMap<u64, Reply> }
@@ -63,12 +63,8 @@ impl Backend {
             };
             if let Some(mut child) = child { let _ = child.wait(); }
             if self.is_stopping() { return }
-            let status = {
-                let mut status = self.status.lock().unwrap();
-                status["running"] = false.into(); status["problem"] = Value::Null;
-                status["dotRetry"] = "后台连接已断开，正在自动重试…".into(); status.clone()
-            };
-            let _ = app.emit("status", status);
+            let status = disconnected_status(&self.status.lock().unwrap());
+            desktop::event(&app, &self, &json!({ "event": "status", "value": status }));
             loop {
                 std::thread::sleep(Duration::from_secs(3));
                 if self.is_stopping() { return }

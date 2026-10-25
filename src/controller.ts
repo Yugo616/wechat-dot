@@ -44,7 +44,7 @@ export async function createController(host: DesktopHost, suppliedConfig?: Confi
       quitting = true; discoveryGeneration++; qrController?.abort();
       await bridge.pause(); await dot.dispose(); await store.update(s => { s.enabled = resume; });
       if (staged) { await scheduleMacInstall(staged, installedApp, version, host.userDirectory, host.pid); scheduled = true; host.quit(); }
-      else engine.quitAndInstall(true, true);
+      else await engine.quitAndInstall(true, true);
     } catch (error) {
       quitting = false;
       if (staged && !scheduled) await removeMacStage(staged.directory).catch(console.warn);

@@ -1,5 +1,5 @@
 import { _electron as electron } from 'playwright-core';
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import assert from 'node:assert/strict';
@@ -21,17 +21,15 @@ try {
     assert.equal(border.width, '1px');
     assert.notEqual(border.color, 'rgba(0, 0, 0, 0)');
   }
-  const screenshot = await desktop.evaluate(async ({ BrowserWindow }) => {
+  await desktop.evaluate(async ({ BrowserWindow }) => {
     const window = BrowserWindow.getAllWindows().find(w => w.webContents.getURL().endsWith('/index.html'));
     if (!window.isVisible()) await new Promise((resolve, reject) => {
       const timer = setTimeout(() => reject(Error('The initial settings window did not appear')), 10000);
       window.once('show', () => { clearTimeout(timer); resolve(); });
     });
-    const captured = await window.webContents.capturePage();
-    if (captured.isEmpty()) throw new Error('The settings window screenshot is empty');
-    return captured.toPNG().toString('base64');
   });
-  await writeFile('assets/screenshot.png', Buffer.from(screenshot, 'base64'));
+  // Playwright waits for the resized page to paint before capturing it.
+  await page.screenshot({ path: 'assets/screenshot.png', animations: 'disabled' });
   await page.getByRole('button', { name: '退出', exact: true }).click();
   await page.getByRole('dialog').waitFor();
   await page.getByRole('checkbox', { name: '不再询问' }).check();

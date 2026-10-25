@@ -52,6 +52,8 @@ jobs:
         run: node scripts/native-package.mjs
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+      - name: Check native application installs its own updates
+        run: node tests/native-install.mjs
       - name: Prepare previous release for upgrade check
         run: node tests/legacy-app.mjs
         env:
