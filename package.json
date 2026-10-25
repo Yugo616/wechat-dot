@@ -1,6 +1,6 @@
 {
   "name": "wechat-dot",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "在微信里和你的 dot 聊天。",
   "private": true,
   "license": "MIT",
@@ -20,9 +20,13 @@
     "pack": "npm run build && electron-builder --dir",
     "release": "npm run build && electron-builder --publish never",
     "smoke": "node scripts/smoke.mjs",
-    "icons": "node scripts/icons.mjs"
+    "icons": "node scripts/icons.mjs",
+    "build:native": "node scripts/native-build.mjs && node scripts/native-desktop.mjs",
+    "test:native": "node tests/native-backend.mjs",
+    "release:native": "npm run build:native && node scripts/native-package.mjs"
   },
   "dependencies": {
+    "builder-util-runtime": "9.7.0",
     "electron-updater": "6.8.9",
     "extract-zip": "2.0.1",
     "qrcode": "1.5.4",
@@ -32,6 +36,8 @@
   },
   "devDependencies": {
     "@resvg/resvg-js": "^2.6.2",
+    "@tauri-apps/api": "2.12.4",
+    "@tauri-apps/cli": "2.12.4",
     "@types/chrome": "^0.3.4",
     "@types/node": "^22.0.0",
     "@types/qrcode": "^1.5.0",
@@ -61,7 +67,14 @@
       "THIRD_PARTY_NOTICES.md"
     ],
     "asar": true,
-    "electronLanguages": ["en", "en-US", "zh-CN", "zh-TW", "zh_CN", "zh_TW"],
+    "electronLanguages": [
+      "en",
+      "en-US",
+      "zh-CN",
+      "zh-TW",
+      "zh_CN",
+      "zh_TW"
+    ],
     "extraResources": [
       {
         "from": "dist/extension",
@@ -88,7 +101,9 @@
     "nsis": {
       "oneClick": true,
       "perMachine": false,
-      "deleteAppDataOnUninstall": false
+      "deleteAppDataOnUninstall": false,
+      "include": "assets/installer.nsh",
+      "runAfterFinish": true
     },
     "publish": {
       "provider": "github",

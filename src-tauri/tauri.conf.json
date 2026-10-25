@@ -1,0 +1,19 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "WeChat Dot",
+  "version": "../package.json",
+  "mainBinaryName": "WeChat Dot",
+  "identifier": "io.github.yugo616.wechatdot",
+  "build": { "frontendDist": "../dist/native-ui" },
+  "app": {
+    "windows": [{ "label": "main", "title": "WeChat Dot", "width": 420, "height": 300, "visible": false, "resizable": false, "maximizable": false, "fullscreen": false, "backgroundColor": "#fafaf8" }],
+    "security": { "csp": "default-src 'self'; img-src 'self' data:; style-src 'self'; script-src 'self'; connect-src ipc: http://ipc.localhost" }
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["app"],
+    "icon": ["../dist/native-icons/icon.icns", "../dist/native-icons/icon.ico", "../assets/icon.png"],
+    "resources": { "../dist/native/": "native/" },
+    "macOS": { "minimumSystemVersion": "12.3" }
+  }
+}

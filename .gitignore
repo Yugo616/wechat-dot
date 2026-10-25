@@ -10,3 +10,5 @@ release/
 coverage/
 local-data/
 test-results/
+src-tauri/target/
+src-tauri/gen/

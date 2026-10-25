@@ -1,6 +1,7 @@
 import { AppUpdater } from 'electron-updater';
 import type { DownloadUpdateOptions } from 'electron-updater/out/AppUpdater';
 import type { ElectronHttpExecutor } from 'electron-updater/out/electronHttpExecutor';
+import type { AppAdapter } from 'electron-updater/out/AppAdapter';
 import { access, copyFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
@@ -8,7 +9,7 @@ import { join } from 'node:path';
 // Unsigned builds use bundle replacement instead of Squirrel.Mac installation.
 export class MacDownloadUpdater extends AppUpdater {
   declare protected httpExecutor: ElectronHttpExecutor;
-  constructor() { super(undefined); }
+  constructor(app?: AppAdapter, executor?: ElectronHttpExecutor) { super(undefined, app); if (executor) this.httpExecutor = executor; }
   protected async doDownloadUpdate(options: DownloadUpdateOptions): Promise<string[]> {
     const { info, provider } = options.updateInfoAndProvider;
     const files = provider.resolveFiles(info);
