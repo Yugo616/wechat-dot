@@ -50,6 +50,7 @@ export async function acceptDot(store: StateStore, messages: any[], members: Set
     const now = Date.now();
     const known = new Set(s.outbound.map(j => j.id));
     for (const raw of messages) {
+      const alreadyKnown = known.has(raw.id);
       const message = normalizeDotMessage(raw, members);
       const restored = s.outbound.find(job => job.id === raw.id && job.restoredAt !== undefined && job.phase !== 'done' && !job.message.complete);
       if (restored && message) {
@@ -69,7 +70,7 @@ export async function acceptDot(store: StateStore, messages: any[], members: Set
       }
       if (s.dotPendingSince) delete s.dotPendingSince[raw.id];
       if (s.dotPending?.includes(raw.id)) s.dotPending = s.dotPending.filter(id => id !== raw.id);
-      else if (raw.id) s.dotCursor = raw.id;
+      else if (raw.id && !alreadyKnown) s.dotCursor = raw.id;
     }
   });
   return skipped;

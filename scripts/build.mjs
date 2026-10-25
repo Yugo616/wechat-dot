@@ -2,7 +2,7 @@ import { build } from 'esbuild';
 import { mkdir, copyFile } from 'node:fs/promises';
 import { buildExtension } from './extension.mjs';
 await mkdir('dist', { recursive: true });
-await build({ entryPoints: ['src/main.ts'], outfile: 'dist/main.cjs', bundle: true, minify: true, keepNames: true, platform: 'node', format: 'cjs', external: ['electron', 'electron-updater', 'original-fs', 'silk-wasm', 'qrcode'] });
+await build({ entryPoints: ['src/main.ts'], outfile: 'dist/main.cjs', bundle: true, minify: true, platform: 'node', format: 'cjs', external: ['electron', 'electron-updater', 'original-fs', 'silk-wasm', 'qrcode'] });
 await build({ entryPoints: ['src/preload.ts'], outfile: 'dist/preload.cjs', bundle: true, minify: true, platform: 'node', format: 'cjs', external: ['electron'] });
 await build({ entryPoints: ['src/ui/app.ts'], outfile: 'dist/ui.js', bundle: true, minify: true, platform: 'browser', target: 'chrome140' });
 await Promise.all(['index.html', 'style.css'].map(file => copyFile(`src/ui/${file}`, `dist/${file}`)));

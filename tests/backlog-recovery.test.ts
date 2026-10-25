@@ -154,6 +154,20 @@ test('held attachment caches survive cleanup and can be restored later', async t
   assert.equal(store.data.inbound[0].prepared?.files[0].path, file.path);
 });
 
+test('a late refresh of a restored reply cannot move the cursor backwards after it expires again', async t => {
+  const { backlogSnapshot, manageBacklog } = await api(), store = await setup(t);
+  await store.update(s => { s.outbound = [{ ...reply('old-reply'), message: { ...reply('old-reply').message, complete: false } }]; });
+  await expireBacklog(store, defaults.storage.maxBacklogAgeMs, now);
+  await manageBacklog(store, 'restore', { connection: backlogSnapshot(store.data).connection, keys: ['outbound:old-reply'] }, now);
+  assert.deepEqual(store.data.dotPending, ['old-reply']);
+  // Another loop expires the job after the request has taken its list of pending IDs.
+  await expireBacklog(store, defaults.storage.maxBacklogAgeMs, now + defaults.storage.maxBacklogAgeMs);
+  await acceptDot(store, [{ id: 'old-reply', account_user_id: 'member', created_at: new Date(old).toISOString(), content: { text: 'late final reply' }, generation: { status: 'completed' } }], new Set(['member']));
+  assert.equal(store.data.dotCursor, 'dot-position');
+  assert.equal(store.data.outbound[0].phase, 'done');
+  assert.equal(store.data.outbound.length, 1);
+});
+
 test('clearing an owned draft keeps enough data to clean only that draft', async t => {
   const { backlogSnapshot, manageBacklog } = await api(), store = await setup(t);
   await store.update(s => { s.inbound = [{ ...question('draft'), phase: 'done', expired: true, composing: true, prepared: { text: 'owned', files: [] } }]; });
