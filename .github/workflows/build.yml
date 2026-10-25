@@ -49,6 +49,7 @@ jobs:
       - name: Test bundled Node and dedicated browser
         run: node tests/native-browser.mjs
       - name: Package native installer
+        id: package
         run: node scripts/native-package.mjs
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'
@@ -68,6 +69,7 @@ jobs:
           WECHAT_DOT_LEGACY_INSTALLER: ${{ steps.legacy.outputs.installer }}
       - name: Check Windows installation and native interface
         if: runner.os == 'Windows'
+        timeout-minutes: 3
         shell: pwsh
         run: |
           $installer = Get-ChildItem release -Filter '*.exe' | Select-Object -First 1
@@ -97,6 +99,7 @@ jobs:
           name: windows-installed-interface
           path: test-results/*.png
       - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() && steps.package.outcome == 'success' }}
         with:
           name: wechat-dot-${{ matrix.platform }}-${{ matrix.arch }}
           path: |

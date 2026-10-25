@@ -32,9 +32,9 @@
 
 **Interfaces:** Controller exposes status, action, backlog, manageBacklog, start and close. DesktopHost supplies directories, version, updater, window/quit/open functions and status publishing. BrowserRuntime supplies directories, fetch and optional embedded-window creation.
 
-- [ ] Add a real temporary-state controller test for initialization, restore/clear while paused, exit preference and restart. Run before implementation; expected missing-controller failure.
-- [ ] Extract existing logic without changing message handling. Run targeted tests, full check and existing desktop fixtures; expected green.
-- [ ] Commit shared controller.
+- [x] Add a real temporary-state controller test for initialization, restore/clear while paused, exit preference and restart. Run before implementation; expected missing-controller failure.
+- [x] Extract existing logic without changing message handling. Run targeted tests, full check and existing desktop fixtures; expected green.
+- [x] Commit shared controller.
 
 ### Task 2: Native process and window
 
@@ -42,9 +42,9 @@
 
 **Interfaces:** JSON-line request/response RPC uses numeric IDs; status/host actions are events. Native UI adapts the same window.wechatDot API. Runtime version and resource paths come from host/config.
 
-- [ ] Add subprocess tests for ready status, parallel commands, pause persistence, malformed request and EOF cleanup; expect missing backend/build failures.
-- [ ] Add native host, bundled Node, renderer adapter, tray and lifecycle. Native build must launch with clean temporary data and no installed Node.
-- [ ] Run backend/browser fixture and local native window inspection. Verify close/hide, exit prompt, tray reopen and child cleanup. Commit.
+- [x] Add subprocess tests for ready status, parallel commands, pause persistence, malformed request and EOF cleanup; expect missing backend/build failures.
+- [x] Add native host, bundled Node, renderer adapter, tray and lifecycle. Native build must launch with clean temporary data and no installed Node.
+- [x] Run backend/browser fixture and local native window inspection. Verify close/hide, exit prompt, tray reopen and child cleanup. Commit.
 
 ### Task 3: Updates, packages and release
 
@@ -54,5 +54,5 @@
 
 - [ ] Test full and differential downloads, old/new install compatibility and failed install preserving state. Expected failing before native updater.
 - [ ] Build all three packages, check clean launch and install/update. Measure installer bytes and verify no Electron framework.
-- [ ] Review entire change; fix reproduced important findings and run affected checks.
+- [x] Review entire change; fix reproduced important findings and run affected checks.
 - [ ] Update README/validation records, publish all three builds, read back release assets/feeds, then update local app preserving accounts, pause and held counts.
