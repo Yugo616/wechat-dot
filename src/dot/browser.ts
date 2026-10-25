@@ -1,4 +1,5 @@
-import { app, BrowserWindow, net } from 'electron';
+import type { BrowserWindow } from 'electron';
+import { browserRuntime } from '../runtime';
 import { EventEmitter } from 'node:events';
 import { spawn, execFile, type ChildProcess } from 'node:child_process';
 import { mkdir, readFile, readlink, rm } from 'node:fs/promises';
@@ -9,7 +10,7 @@ import { dotPageAction, pageResult } from './page';
 import { markDedicatedPage, prepareBrowserIdentity } from './identity';
 import { ensureBrowser } from './runtime';
 
-// The full browser owns an independent profile. Electron remains the desktop shell.
+// The full browser owns an independent profile, separate from the settings window.
 export class DotBrowser extends EventEmitter {
   private embedded?: BrowserWindow;
   private socket?: WebSocket;
@@ -21,7 +22,7 @@ export class DotBrowser extends EventEmitter {
   private sequence = 0;
   private pending = new Map<number, { resolve: (v: any) => void; reject: (e: Error) => void; timer: ReturnType<typeof setTimeout> }>();
   constructor(readonly config: Config['dot']) { super(); }
-  protected get directory(): string { return join(app.getPath('userData'), this.config.runtime.profileDirectory); }
+  protected get directory(): string { return join(browserRuntime().userDirectory, this.config.runtime.profileDirectory); }
   protected async hasOwnedBrowser(): Promise<boolean> {
     if (process.platform === 'win32') {
       const script = `Get-CimInstance Win32_Process -Filter "Name='chrome.exe' OR Name='msedge.exe'" | Where-Object { $_.CommandLine -and $_.CommandLine.Contains('--user-data-dir=' + $env:WECHAT_DOT_BROWSER_PROFILE) -and !$_.CommandLine.Contains('--type=') } | Select-Object -ExpandProperty ProcessId`;
@@ -65,15 +66,15 @@ export class DotBrowser extends EventEmitter {
   async finishLogin(): Promise<boolean> { return false; }
   private async executable(): Promise<string | undefined> {
     if (this.config.browser === 'embedded') return;
-    return ensureBrowser(this.config.runtime, join(app.getPath('userData'), 'Browser Runtime'), {
-      signal: this.lifetime.signal, fetch: net.fetch.bind(net), progress: message => this.emit('progress', message)
+    return ensureBrowser(this.config.runtime, join(browserRuntime().userDirectory, 'Browser Runtime'), {
+      signal: this.lifetime.signal, fetch: browserRuntime().fetch, progress: message => this.emit('progress', message)
     });
   }
   async open(show: boolean): Promise<void> {
     const executable = await this.executable();
     this.lifetime.signal.throwIfAborted();
     if (!executable) {
-      this.embedded = new BrowserWindow({ width: 1060, height: 780, show, title: '登录 ChatGPT · WeChat Dot', webPreferences: { partition: 'persist:chatgpt', nodeIntegration: false, contextIsolation: true, sandbox: true, backgroundThrottling: false } });
+      this.embedded = browserRuntime().createEmbeddedWindow!({ width: 1060, height: 780, show, title: '登录 ChatGPT · WeChat Dot', webPreferences: { partition: 'persist:chatgpt', nodeIntegration: false, contextIsolation: true, sandbox: true, backgroundThrottling: false } });
       const page = this.embedded.webContents;
       this.embedded.on('close', e => { e.preventDefault(); this.embedded?.hide(); });
       this.embedded.on('closed', () => { this.embedded = undefined; this.emit('closed'); });

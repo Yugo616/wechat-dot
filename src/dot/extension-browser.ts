@@ -1,7 +1,7 @@
 import { createHash, randomBytes } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { basename, join } from 'node:path';
-import { app } from 'electron';
+import { browserRuntime } from '../runtime';
 import { DotBrowser } from './browser';
 import { ExtensionLink } from './extension-link';
 import { prepareExtension } from './extension-runtime';
@@ -32,12 +32,12 @@ export class ExtensionBrowser extends DotBrowser {
     });
   }
   private async prepareConnection(): Promise<void> {
-    const directory = join(app.getPath('userData'), 'Browser Connection');
-    const source = app.isPackaged ? join(process.resourcesPath, 'browser-connection') : join(app.getAppPath(), 'dist', 'extension');
+    const directory = join(browserRuntime().userDirectory, 'Browser Connection');
+    const source = browserRuntime().extensionDirectory;
     await prepareExtension(source, directory, this.config, { port: this.link.port, token: this.token }, this.lifetime.signal);
   }
   protected override async loginArguments(): Promise<string[]> {
-    return [`--load-extension=${join(app.getPath('userData'), 'Browser Connection')}`, ...this.config.backgroundArguments];
+    return [`--load-extension=${join(browserRuntime().userDirectory, 'Browser Connection')}`, ...this.config.backgroundArguments];
   }
   private async openManaged(): Promise<void> {
     await this.prepareConnection();

@@ -46,11 +46,11 @@ touch "$5"
 /usr/bin/open -n "$target" --env "WECHAT_DOT_DATA=$6"
 `;
 
-export async function scheduleMacInstall(staged: { app: string; directory: string }, installedApp: string, version: string, userData: string): Promise<void> {
+export async function scheduleMacInstall(staged: { app: string; directory: string }, installedApp: string, version: string, userData: string, hostPid = process.pid): Promise<void> {
   const script = join(staged.directory, 'install.sh');
-  await writeFile(join(staged.directory, 'receipt.json'), JSON.stringify({ target: installedApp, version, pid: process.pid }), { mode: 0o600 });
+  await writeFile(join(staged.directory, 'receipt.json'), JSON.stringify({ target: installedApp, version, pid: hostPid }), { mode: 0o600 });
   await writeFile(script, installScript, { mode: 0o700 });
-  const child = spawn('/bin/sh', [script, String(process.pid), installedApp, staged.app, join(staged.directory, basename(installedApp) + '.previous'), join(staged.directory, 'installed'), userData], { detached: true, stdio: 'ignore' });
+  const child = spawn('/bin/sh', [script, String(hostPid), installedApp, staged.app, join(staged.directory, basename(installedApp) + '.previous'), join(staged.directory, 'installed'), userData], { detached: true, stdio: 'ignore' });
   await new Promise<void>((resolve, reject) => { child.once('spawn', resolve); child.once('error', reject); });
   child.unref();
 }

@@ -1,22 +1,13 @@
-import { app, BrowserWindow, ipcMain, Menu, nativeImage, screen, shell, Tray } from 'electron';
+import { app, BrowserWindow, ipcMain, Menu, nativeImage, net, screen, shell, Tray } from 'electron';
 import { dirname, join } from 'node:path';
-import { setTimeout as delay } from 'node:timers/promises';
-import QRCode from 'qrcode';
 import { NsisUpdater } from 'electron-updater';
-import { UpdateController } from './updates/controller';
 import { MacDownloadUpdater } from './updates/mac-download';
-import { finishMacInstall, removeMacStage, scheduleMacInstall, stageMacUpdate } from './updates/mac-install';
 import { loadConfig } from './config';
-import { connectionKey, StateStore } from './state';
-import { backlogSnapshot, countBacklog } from './backlog';
-import { WeixinClient, WeixinExpiredError } from './weixin/client';
-import { DotClient } from './dot/client';
-import { DotAccessError } from './dot/errors';
-import { sameDotConnection } from './dot/profile';
-import { Bridge } from './bridge';
-import type { AppStatus } from './types';
-import { connectionRetry, connectionSummary, problemText } from './status';
+import { createController, type DesktopController } from './controller';
+import { configureRuntime } from './runtime';
+import { connectionSummary } from './status';
 
+// Electron is retained as a development/test host for the shared desktop logic.
 app.setName('WeChat Dot');
 if (process.env.WECHAT_DOT_DATA) app.setPath('userData', process.env.WECHAT_DOT_DATA);
 if (!app.requestSingleInstanceLock()) app.quit();
@@ -25,42 +16,9 @@ else void run().catch(e => { console.error(e.message); app.quit(); });
 async function run(): Promise<void> {
   await app.whenReady();
   const config = await loadConfig(app.getAppPath(), app.getPath('userData'));
-  const store = new StateStore(app.getPath('userData')); await store.load();
-  const weixin = new WeixinClient(config.weixin, app.getVersion(), store.data.weixin);
-  const dot = new DotClient(config.dot);
-  const engine = process.platform === 'darwin' ? new MacDownloadUpdater() : new NsisUpdater();
-  engine.autoDownload = false; engine.autoInstallOnAppQuit = false;
-  if (engine instanceof NsisUpdater) engine.installDirectory = dirname(process.execPath);
-  engine.allowPrerelease = false; engine.allowDowngrade = false;
-  engine.setFeedURL(config.updates.feed as Parameters<typeof engine.setFeedURL>[0]);
-  if (process.platform === 'darwin') { engine.channel = `latest-${process.arch}`; engine.allowDowngrade = false; }
-  const updates = new UpdateController(engine, update => publish({ update }), async (file, version) => {
-    if (!app.isPackaged) throw new Error('请在已安装的 WeChat Dot 中更新。');
-    const installedApp = process.platform === 'darwin' ? join(process.execPath, '../../..') : '';
-    const staged = process.platform === 'darwin' ? await stageMacUpdate(file, installedApp, config.desktop.appId, version) : undefined;
-    const resume = store.data.enabled;
-    let scheduled = false;
-    try {
-      quitting = true; discoveryGeneration++; qrController?.abort();
-      await bridge.pause(); await dot.dispose(); await store.update(s => { s.enabled = resume; });
-      if (staged) { await scheduleMacInstall(staged, installedApp, version, app.getPath('userData')); scheduled = true; app.quit(); }
-      else engine.quitAndInstall(true, true);
-    } catch (error) {
-      quitting = false;
-      if (staged && !scheduled) await removeMacStage(staged.directory).catch(console.warn);
-      if (resume) await action('start');
-      throw error;
-    }
-  });
-  let quitting = false, qrController: AbortController | undefined, verifyCode = '';
-  let discovery: Promise<void> | undefined, discoveryGeneration = 0;
-  let weixinLogin: Promise<void> | undefined;
-  let dotLogin: Promise<void> | undefined;
-  let resumeAfterLogin = false;
-  const resumeInBackground = Boolean(store.data.enabled && store.data.weixin && store.data.dot);
-  let status: AppStatus = { weixin: store.data.weixin ? 'ready' : 'idle', dot: store.data.dot ? 'ready' : 'idle', running: false,
-    weixinDetail: store.data.weixin ? '扫码绑定已保存' : '用手机微信扫码', dotDetail: store.data.dot?.name ?? '在浏览器中登录 ChatGPT', dotName: store.data.dot?.name,
-    detail: store.data.dot && store.data.weixin ? '点击开始转发，即可在微信里聊天。' : '先扫码绑定微信，再登录 ChatGPT。', version: app.getVersion(), extension: config.dot.browser === 'extension', exitAction: store.data.exitAction };
+  configureRuntime({ userDirectory: app.getPath('userData'),
+    extensionDirectory: app.isPackaged ? join(process.resourcesPath, 'browser-connection') : join(app.getAppPath(), 'dist', 'extension'),
+    fetch: (input, init) => net.fetch(input instanceof URL ? input.toString() : input, init), createEmbeddedWindow: options => new BrowserWindow(options) });
   const window = new BrowserWindow({ width: config.desktop.windowWidth, height: config.desktop.minContentHeight, useContentSize: true,
     show: false, resizable: false, maximizable: false, fullscreenable: false, title: 'WeChat Dot', backgroundColor: '#fafaf8',
     icon: join(app.getAppPath(), 'assets', 'icon.png'),
@@ -71,269 +29,43 @@ async function run(): Promise<void> {
   if (process.platform === 'darwin') trayIcon.setTemplateImage(true);
   const tray = new Tray(trayIcon); tray.setToolTip('WeChat Dot');
   const show = () => { window.show(); window.focus(); };
-  window.once('ready-to-show', () => {
-    if (!resumeInBackground) show();
-    if (app.isPackaged && process.platform === 'darwin') void finishMacInstall(join(process.execPath, '../../..'), app.getVersion()).catch(console.warn);
-  });
-  function publish(patch: Partial<AppStatus>): void {
-    const wasRunning = status.running;
-    const hadAccessError = status.dot === 'error' || status.weixin === 'error';
-    if (patch.dot === 'error' || patch.weixin === 'error') resumeAfterLogin ||= Boolean(status.running || status.connecting);
-    if (patch.running) resumeAfterLogin = false;
-    status = { ...status, ...patch, weixinSendError: store.data.weixinSendError, skippedMessages: countBacklog(store.data), backlogConnection: connectionKey(store.data) ?? '' };
-    if (patch.running || patch.dot === 'error' || patch.weixin === 'error') status.connecting = false;
-    if (!window.isDestroyed()) window.webContents.send('status', status);
-    const { title } = connectionSummary(status);
-    tray.setToolTip(`WeChat Dot · ${title}`);
-    tray.setContextMenu(Menu.buildFromTemplate([
-      { label: title, enabled: false },
-      { label: '打开 WeChat Dot', click: show },
-      { label: status.running || status.connecting ? '暂停转发' : '开始转发', enabled: status.running || status.connecting || (status.weixin === 'ready' && status.dot === 'ready'), click: () => { void action(status.running || status.connecting ? 'pause' : 'start'); } },
-      { type: 'separator' },
-      { label: '打开专用窗口', enabled: status.dot === 'ready', click: () => { void action('show-dot'); } },
-      { label: '重新登录', submenu: [
-        { label: '微信', click: () => { show(); void action('weixin'); } },
-        { label: 'ChatGPT', click: () => { show(); void action('dot'); } }
-      ] },
-      { label: status.update?.phase === 'ready' ? '重启更新' : '检查更新', click: () => { show(); void action(status.update?.phase === 'ready' ? 'install-update' : 'check-update'); } },
-      ...(store.data.exitAction ? [{ label: '恢复退出询问', click: () => { void store.update(s => { delete s.exitAction; }).then(() => publish({ exitAction: undefined })); } }] : []),
-      { type: 'separator' }, { label: '退出后台', click: () => app.quit() }
-    ]));
-    if (status.running && !wasRunning) {
-      window.hide();
-      void dot.window?.hide().catch(() => {});
+  let quitting = false;
+  let core: DesktopController | undefined;
+  const action = (name: string) => { void core?.action(name); };
+  core = await createController({
+    appDirectory: app.getAppPath(), userDirectory: app.getPath('userData'), resourcesDirectory: process.resourcesPath,
+    executablePath: process.execPath, version: app.getVersion(), isPackaged: app.isPackaged,
+    show, hide: () => window.hide(), quit: () => app.quit(), openPath: shell.openPath, openExternal: shell.openExternal,
+    createUpdater: () => {
+      if (process.platform === 'darwin') return new MacDownloadUpdater();
+      const updater = new NsisUpdater(); updater.installDirectory = dirname(process.execPath); return updater;
+    },
+    publish: status => {
+      if (!window.isDestroyed()) window.webContents.send('status', status);
+      const { title } = connectionSummary(status);
+      tray.setToolTip(`WeChat Dot · ${title}`);
+      tray.setContextMenu(Menu.buildFromTemplate([
+        { label: title, enabled: false }, { label: '打开 WeChat Dot', click: show },
+        { label: status.running || status.connecting ? '暂停转发' : '开始转发', enabled: status.running || status.connecting || (status.weixin === 'ready' && status.dot === 'ready'), click: () => action(status.running || status.connecting ? 'pause' : 'start') },
+        { type: 'separator' }, { label: '打开专用窗口', enabled: status.dot === 'ready', click: () => action('show-dot') },
+        { label: '重新登录', submenu: [ { label: '微信', click: () => { show(); action('weixin'); } }, { label: 'ChatGPT', click: () => { show(); action('dot'); } } ] },
+        { label: status.update?.phase === 'ready' ? '重启更新' : '检查更新', click: () => { show(); action(status.update?.phase === 'ready' ? 'install-update' : 'check-update'); } },
+        ...(status.exitAction ? [{ label: '恢复退出询问', click: () => action('reset-exit') }] : []),
+        { type: 'separator' }, { label: '退出后台', click: () => app.quit() }
+      ]));
     }
-    if ((status.dot === 'error' || status.weixin === 'error') && !hadAccessError) show();
-  }
-  const bridge = new Bridge(store, weixin, dot, config, publish);
-  window.on('close', e => { if (!quitting) { e.preventDefault(); window.hide(); } });
+  }, config);
+  window.on('close', event => { if (!quitting) { event.preventDefault(); window.hide(); } });
   app.on('second-instance', show); app.on('activate', show);
-  app.on('before-quit', e => {
+  app.on('before-quit', event => {
     if (quitting) return;
-    e.preventDefault(); quitting = true; qrController?.abort();
-    void dot.dispose().finally(() => app.quit());
+    event.preventDefault(); quitting = true;
+    void core!.close().finally(() => app.quit());
   });
-  dot.on('problem', e => {
-    const retry = connectionRetry(e);
-    publish(retry && (status.running || status.connecting) ? { dotRetry: retry, problem: undefined } : { problem: retry ? '网络暂时不可用，请稍后重试。' : e.message });
-  });
-  dot.on('progress', dotDetail => { if (!quitting) publish({ dotDetail, dotRetry: undefined }); });
-
-  function discover(): Promise<void> {
-    if (discovery) return discovery;
-    const generation = discoveryGeneration;
-    discovery = Promise.resolve().then(async () => { try {
-      const profile = await dot.discover();
-      if (quitting || generation !== discoveryGeneration) return;
-      const previous = store.data.dot;
-      if (previous && !sameDotConnection(previous, profile)) {
-        publish({ connecting: false });
-        await bridge.pause();
-      }
-      await store.connectDot(profile);
-      if (quitting || generation !== discoveryGeneration) return;
-      dot.profile = store.data.dot;
-      publish({ dot: 'ready', dotName: profile.name, dotDetail: profile.name, detail: status.running ? '现在可以在微信里聊天了。' : '点击开始转发，即可在微信里聊天。', problem: undefined, dotRetry: undefined });
-      if (status.connecting && status.weixin === 'ready' && store.data.weixin && !status.running) await bridge.start();
-    } catch (e) {
-      if (quitting || generation !== discoveryGeneration) return;
-      if (e instanceof DotAccessError) {
-        await bridge.pause();
-        publish({ dot: 'error', connecting: false, dotDetail: e.message, problem: e.message });
-      } else if (e instanceof WeixinExpiredError) {
-        await bridge.pause();
-        publish({ weixin: 'error', connecting: false, weixinDetail: e.message, problem: e.message });
-      } else {
-        const retry = connectionRetry(e);
-        publish({ dot: 'waiting', dotDetail: retry ? '正在自动重试…' : problemText(e), dotRetry: retry, problem: retry ? undefined : problemText(e) });
-      }
-    } }).finally(() => { discovery = undefined; });
-    return discovery;
-  }
-  async function pause(): Promise<void> {
-    discoveryGeneration++;
-    resumeAfterLogin = false; qrController?.abort(); qrController = undefined;
-    publish({ running: false, connecting: false, qr: undefined, verifyRequired: false,
-      ...(status.weixin === 'waiting' ? { weixin: store.data.weixin ? 'ready' as const : 'idle' as const, weixinDetail: store.data.weixin ? '扫码绑定已保存' : '用手机微信扫码' } : {}),
-      ...(status.dot === 'waiting' && !status.finishLogin ? { dot: store.data.dot ? 'ready' as const : 'idle' as const, dotDetail: store.data.dot?.name ?? '在浏览器中登录 ChatGPT' } : {}) });
-    await bridge.pause();
-    if (dotLogin || dot.isOpening) await dot.dispose();
-  }
-  dot.on('closed', () => {
-    if (quitting || status.finishLogin) return;
-    const generation = ++discoveryGeneration;
-    const resume = Boolean(status.running || status.connecting);
-    publish({ running: false, connecting: resume, dot: store.data.dot ? 'ready' : 'idle',
-      dotDetail: resume ? '正在恢复 ChatGPT…' : store.data.dot?.name ?? '在浏览器中登录 ChatGPT', problem: undefined });
-    void (async () => {
-      await bridge.pause();
-      await discovery;
-      if (generation === discoveryGeneration && status.connecting) {
-        publish({ dot: 'waiting' });
-        await discover();
-      }
-    })().catch(e => publish({ problem: e.message }));
-  });
-  const autoDiscover = () => { if (status.dot === 'waiting' && !status.finishLogin && !dotLogin) void discover(); };
-  dot.on('loaded', autoDiscover);
-  const discoveryTimer = setInterval(autoDiscover, config.dot.pollIntervalMs);
-  app.on('will-quit', () => clearInterval(discoveryTimer));
-
-  function loginWeixin(resume = false): Promise<void> {
-    if (weixinLogin) return weixinLogin;
-    const operation = weixinLogin = performWeixinLogin(resume).finally(() => { if (weixinLogin === operation) weixinLogin = undefined; });
-    return operation;
-  }
-  async function performWeixinLogin(resume: boolean): Promise<void> {
-    const previous = store.data.weixin;
-    const stopping = pause(), generation = discoveryGeneration;
-    await stopping;
-    if (quitting || generation !== discoveryGeneration) return;
-    qrController?.abort(); const controller = qrController = new AbortController();
-    publish({ weixin: 'waiting', connecting: resume, qr: undefined, weixinDetail: '正在获取二维码…', problem: undefined });
-    async function retry<T>(request: () => Promise<T>): Promise<T> {
-      while (true) {
-        controller.signal.throwIfAborted();
-        try { const result = await request(); controller.signal.throwIfAborted(); publish({ weixinRetry: undefined }); return result; }
-        catch (error) {
-          if (controller.signal.aborted || !connectionRetry(error)) throw error;
-          publish({ weixinRetry: connectionRetry(error) });
-          await delay(config.weixin.retryDelayMs, undefined, { signal: controller.signal });
-        }
-      }
-    }
-    try {
-      while (!controller.signal.aborted) {
-        verifyCode = '';
-        const qr = await retry(() => weixin.request('/ilink/bot/get_bot_qrcode?bot_type=' + encodeURIComponent(config.weixin.botType), { local_token_list: [] }, { baseUrl: config.weixin.baseUrl, anonymous: true, signal: controller.signal }));
-        const image = await QRCode.toDataURL(qr.qrcode_img_content, { width: 230, margin: 1 });
-        controller.signal.throwIfAborted();
-        publish({ qr: image, weixinDetail: '用微信扫一扫，再在手机上确认' });
-        let baseUrl = config.weixin.baseUrl;
-        while (!controller.signal.aborted) {
-          const query = new URLSearchParams({ qrcode: qr.qrcode });
-          if (verifyCode) { query.set('verify_code', verifyCode); verifyCode = ''; }
-          const value = await retry(() => weixin.request('/ilink/bot/get_qrcode_status?' + query, undefined, { baseUrl, anonymous: true, signal: controller.signal, timeout: config.weixin.longPollTimeoutMs }).catch(e => {
-            if (e.name === 'TimeoutError') return { status: 'wait' }; throw e;
-          }));
-          if (value.status === 'confirmed') {
-            if (!value.bot_token || !value.ilink_user_id || !value.ilink_bot_id) throw new Error('微信没有返回完整登录信息，请重新扫码。');
-            const account = { token: value.bot_token, userId: value.ilink_user_id, botId: value.ilink_bot_id, baseUrl: value.baseurl || baseUrl };
-            controller.signal.throwIfAborted();
-            await store.connectWeixin(account);
-            weixin.account = store.data.weixin;
-            controller.signal.throwIfAborted();
-            if (previous && (previous.botId !== account.botId || previous.userId !== account.userId)) publish({ connecting: false });
-            publish({ qr: undefined, verifyRequired: false, weixinDetail: '正在同步微信…' });
-            await retry(() => bridge.primeWeixin(controller.signal));
-            publish({ weixin: 'ready', weixinDetail: '扫码绑定已保存', detail: store.data.dot ? '点击开始转发，即可在微信里聊天。' : '微信已绑定，请登录 ChatGPT。' });
-            if (resume && status.connecting && store.data.dot) { publish({ dot: 'waiting' }); await discover(); }
-            return;
-          }
-          if (value.status === 'expired') { publish({ qr: undefined, verifyRequired: false, weixinDetail: '正在自动刷新二维码…' }); break; }
-          if (value.status === 'verify_code_blocked') throw new Error('配对码尝试次数过多，请稍后重新扫码。');
-          if (value.status === 'need_verifycode') publish({ verifyRequired: true, weixinDetail: '请输入手机上显示的配对码' });
-          if (value.status === 'scaned') publish({ weixinDetail: '已扫码，请在手机上确认' });
-          if (value.status === 'scaned_but_redirect' && value.redirect_host) baseUrl = `https://${value.redirect_host}`;
-          if (value.status === 'binded_redirect') throw new Error('这个微信已绑定，请在手机上选择重新连接后再扫码。');
-          await delay(config.weixin.retryDelayMs, undefined, { signal: controller.signal });
-        }
-      }
-    } catch (e) { if (!controller.signal.aborted) publish({ weixin: 'error', weixinDetail: problemText(e, '微信连接未完成，请点击「重连微信」。'), qr: undefined, weixinRetry: undefined }); }
-  }
-  function loginDot(resume: boolean): Promise<void> {
-    if (dotLogin) return dotLogin;
-    const operation = dotLogin = performDotLogin(resume).finally(() => { if (dotLogin === operation) dotLogin = undefined; });
-    return operation;
-  }
-  async function performDotLogin(resume: boolean): Promise<void> {
-    const stopping = pause(), generation = discoveryGeneration;
-    await stopping;
-    if (quitting || generation !== discoveryGeneration) return;
-    publish({ dot: 'waiting', connecting: resume, finishLogin: false, dotDetail: '正在打开登录窗口…', problem: undefined });
-    let manual: boolean;
-    while (true) {
-      try { manual = await dot.login(); break; }
-      catch (error) {
-        if (quitting || generation !== discoveryGeneration) return;
-        const retry = connectionRetry(error);
-        if (!retry) throw error;
-        publish({ dotRetry: retry, dotDetail: '专用浏览器准备未完成，正在自动重试…' });
-        await delay(config.dot.pollIntervalMs);
-        if (quitting || generation !== discoveryGeneration) return;
-      }
-    }
-    if (quitting || generation !== discoveryGeneration) { await dot.dispose(); return; }
-    publish({ finishLogin: manual, dotDetail: status.extension ? '打开 Chrome 扩展，点击「连接 dot」' : manual ? '登录后，点击下方「登录完成」' : '请在 ChatGPT 窗口完成登录' });
-    if (!manual) await discover();
-  }
-  async function action(name: string, value?: string): Promise<void> {
-    try {
-      if (name === 'weixin' || name === 'recover-weixin') { await loginWeixin(name === 'recover-weixin' && Boolean(resumeAfterLogin || status.running || status.connecting)); return; }
-      if (name === 'verify') { verifyCode = value?.trim() ?? ''; return; }
-      if (name === 'dot' || name === 'recover-dot') {
-        const resume = name === 'recover-dot' && Boolean(resumeAfterLogin || status.running || status.connecting);
-        await loginDot(resume);
-      }
-      if (name === 'finish-login') { await dotLogin; await dot.finishLogin(); publish({ finishLogin: false }); await discover(); }
-      if (name === 'show-dot') await dot.showConversation();
-      if (name === 'discover') await discover();
-      if (name === 'extension') {
-        if (!dot.window) {
-          publish({ dot: 'waiting', dotDetail: '打开 Chrome 扩展，点击「连接 dot」' });
-          await dot.open(false);
-        }
-        const directory = app.isPackaged ? join(process.resourcesPath, 'chrome-extension') : join(app.getAppPath(), 'dist', 'extension');
-        await shell.openPath(directory);
-        publish({ detail: '在 Chrome 扩展页打开「开发者模式」，点击「加载已解压的扩展」，选择这个文件夹。' });
-      }
-      if (name === 'start' && !status.running) {
-        publish({ connecting: true, dot: 'waiting', dotDetail: '正在检查已保存的登录…', detail: '正在准备转发…', problem: undefined });
-        await discover();
-      }
-      if (name === 'pause') await pause();
-      if (name === 'received' || name === 'retry') {
-        await pause();
-        await bridge.resolveUncertain(name === 'retry');
-        await action('start');
-      }
-      if (name === 'download') await shell.openExternal(config.updates.releaseUrl);
-      if (name === 'check-update') await updates.check();
-      if (name === 'install-update') await updates.install();
-      if (name === 'request-exit') {
-        if (store.data.exitAction === 'minimize') window.hide();
-        else if (store.data.exitAction === 'quit') app.quit();
-        else { publish({ exitPrompt: true }); show(); }
-      }
-      if (name === 'cancel-exit') publish({ exitPrompt: false });
-      if (name === 'exit-minimize' || name === 'exit-quit') {
-        const choice = name === 'exit-minimize' ? 'minimize' : 'quit';
-        if (value === 'remember') await store.update(s => { s.exitAction = choice; });
-        publish({ exitPrompt: false, exitAction: store.data.exitAction });
-        if (choice === 'minimize') window.hide(); else app.quit();
-      }
-      if (name === 'quit') app.quit();
-    } catch (e) {
-      const retry = connectionRetry(e);
-      if (retry && (!status.finishLogin || (name === 'finish-login' && !dot.window?.manualLogin)) && ['start', 'discover', 'finish-login', 'show-dot', 'recover-dot'].includes(name)) publish({ dot: 'waiting', finishLogin: false, dotRetry: retry, problem: undefined });
-      else publish({ problem: problemText(e) });
-      show();
-    }
-  }
-  ipcMain.handle('status', () => status);
-  ipcMain.handle('backlog', event => {
-    if (event.sender !== window.webContents) return;
-    return backlogSnapshot(store.data);
-  });
-  ipcMain.handle('manage-backlog', async (event, action, selection) => {
-    if (event.sender !== window.webContents) return;
-    const changed = await bridge.manageBacklog(action, selection);
-    return { changed, snapshot: backlogSnapshot(store.data) };
-  });
-  ipcMain.handle('action', (event, name, value) => {
-    if (event.sender !== window.webContents) return;
-    return action(name, value);
-  });
+  ipcMain.handle('status', () => core!.status());
+  ipcMain.handle('backlog', event => event.sender === window.webContents ? core!.backlog() : undefined);
+  ipcMain.handle('manage-backlog', (event, operation, selection) => event.sender === window.webContents ? core!.manageBacklog(operation, selection) : undefined);
+  ipcMain.handle('action', (event, name, value) => event.sender === window.webContents ? core!.action(name, value) : undefined);
   ipcMain.on('resize', (event, height) => {
     if (event.sender !== window.webContents || !Number.isFinite(height)) return;
     const display = screen.getDisplayMatching(window.getBounds());
@@ -344,9 +76,5 @@ async function run(): Promise<void> {
     if (bounds.y + bounds.height > display.workArea.y + display.workArea.height) window.setPosition(bounds.x, Math.max(display.workArea.y, display.workArea.y + display.workArea.height - bounds.height));
   });
   await window.loadFile(join(__dirname, 'index.html'));
-  publish({});
-  if (resumeInBackground) {
-    publish({ connecting: true, dot: 'waiting', dotDetail: '正在恢复 ChatGPT…' });
-    await discover();
-  }
+  await core.start();
 }
