@@ -55,4 +55,4 @@
 - [x] Test full and differential downloads, old/new install compatibility and failed install preserving state. Expected failing before native updater.
 - [x] Build all three packages, check clean launch and install/update. Measure installer bytes and verify no Electron framework.
 - [x] Review entire change; fix reproduced important findings and run affected checks.
-- [ ] Update README/validation records, publish all three builds, read back release assets/feeds, then update local app preserving accounts, pause and held counts.
+- [x] Update README/validation records, publish all three builds, read back release assets/feeds, then update local app preserving accounts, pause and held counts.
