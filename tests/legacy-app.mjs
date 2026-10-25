@@ -1,4 +1,4 @@
-import { readFile, writeFile, mkdir, rm } from 'node:fs/promises';
+import { readFile, writeFile, appendFile, mkdir, rm } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
@@ -12,6 +12,7 @@ const response = await fetch(`https://github.com/${owner}/${repo}/releases/downl
 if (!response.ok) throw new Error(`Previous release download failed: ${response.status}`);
 await mkdir('.cache', { recursive: true });
 const asset = resolve('.cache', file); await writeFile(asset, Buffer.from(await response.arrayBuffer()));
+if (process.env.GITHUB_OUTPUT) await appendFile(process.env.GITHUB_OUTPUT, `installer=${asset}\n`);
 await rm(target, { recursive: true, force: true });
 const exec = promisify(execFile);
 if (mac) await exec('/usr/bin/ditto', ['-x', '-k', asset, target]);

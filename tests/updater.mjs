@@ -44,7 +44,13 @@ async function launch() {
 }
 try {
   await mkdir(apps); await mkdir(data);
-  await cp(mac ? resolve(sourceExe, '../../..') : dirname(sourceExe), target, { recursive: true, verbatimSymlinks: true });
+  if (!mac && process.env.WECHAT_DOT_LEGACY_INSTALLER) {
+    // NSIS preserves Start-menu shortcuts during updates. Install the old version at
+    // this path so its registered shortcuts match the application being upgraded.
+    await exec(resolve(process.env.WECHAT_DOT_LEGACY_INSTALLER), ['/S', `/D=${target}`]);
+    const shortcut = await exec('powershell.exe', ['-NoProfile', '-Command', '$ErrorActionPreference = "Stop"; $link = Join-Path ([Environment]::GetFolderPath("Programs")) ($env:WECHAT_DOT_FIXTURE_NAME + ".lnk"); (New-Object -ComObject WScript.Shell).CreateShortcut($link).TargetPath'], { env: { ...shellEnv, WECHAT_DOT_FIXTURE_NAME: pkg.build.productName } });
+    assert.equal((await realpath(shortcut.stdout.trim())).toLowerCase(), (await realpath(executable)).toLowerCase(), 'Previous installer must register this fixture as its launch target');
+  } else await cp(mac ? resolve(sourceExe, '../../..') : dirname(sourceExe), target, { recursive: true, verbatimSymlinks: true });
   const unpacked = join(root, 'unpacked');
   extractAll(join(resources, 'app.asar'), unpacked);
   const oldPackage = JSON.parse(await readFile(join(unpacked, 'package.json'), 'utf8')); oldPackage.version = '0.9.9';

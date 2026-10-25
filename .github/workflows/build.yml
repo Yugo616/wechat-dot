@@ -56,6 +56,7 @@ jobs:
         timeout-minutes: 5
         run: node tests/native-install.mjs
       - name: Prepare previous release for upgrade check
+        id: legacy
         run: node tests/legacy-app.mjs
         env:
           WECHAT_DOT_LEGACY_VERSION: '1.1.0'
@@ -64,6 +65,7 @@ jobs:
         env:
           WECHAT_DOT_UPDATE_NATIVE: '1'
           WECHAT_DOT_EXECUTABLE: ${{ runner.os == 'macOS' && '.cache/legacy/WeChat Dot.app/Contents/MacOS/WeChat Dot' || '.cache/legacy/WeChat Dot.exe' }}
+          WECHAT_DOT_LEGACY_INSTALLER: ${{ steps.legacy.outputs.installer }}
       - name: Check Windows installation and native interface
         if: runner.os == 'Windows'
         shell: pwsh
