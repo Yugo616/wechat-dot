@@ -1,7 +1,9 @@
 import { setTimeout as delay } from 'node:timers/promises';
 import { createHash } from 'node:crypto';
+import { access } from 'node:fs/promises';
 import type { Config } from './config';
-import type { AppStatus, BridgeTask, DotAttachment, InboundJob, LocalFile, RetryStatus, WeixinItem } from './types';
+import type { AppStatus, BacklogSelection, BridgeTask, DotAttachment, InboundJob, LocalFile, RetryStatus, WeixinItem } from './types';
+import { countBacklog, discardHeldContent, isHeld, manageBacklog } from './backlog';
 import { StateStore } from './state';
 import { WeixinClient, WeixinExpiredError, WeixinSendRejectedError } from './weixin/client';
 import { DotClient } from './dot/client';
@@ -13,12 +15,15 @@ import { silkToWav } from './weixin/voice';
 import { connectionRetry } from './status';
 
 class ExpiredMessageError extends Error {}
+async function filesAvailable(files: LocalFile[]): Promise<boolean> {
+  try { await Promise.all(files.map(file => access(file.path))); return true; }
+  catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return false; throw error; }
+}
 
 export class Bridge {
   private controller?: AbortController;
   private tasks?: Promise<void>;
   private starting?: Promise<void>;
-  private skippedMessages = 0;
   private failures = new Map<BridgeTask, { error: Error; retry?: RetryStatus }>();
   private readonly media: MediaStore;
   private readonly weixinMedia: WeixinMedia;
@@ -49,8 +54,7 @@ export class Bridge {
     if (!this.store.data.weixin || !this.dot.profile) throw new Error('请先连接微信和 dot。');
     const controller = this.controller = new AbortController();
     this.starting = (async () => {
-      this.skippedMessages = 0;
-      this.status({ detail: '正在同步收取位置…', skippedMessages: 0 });
+      this.status({ detail: '正在同步收取位置…', skippedMessages: countBacklog(this.store.data) });
       await this.primeWeixin(controller.signal);
       if (this.store.data.dotCursor === undefined) {
         const baseline = await this.dot.baseline();
@@ -59,8 +63,8 @@ export class Bridge {
       if (controller.signal.aborted) return;
       await this.expire();
       const keep = new Set([this.store.data, ...Object.values(this.store.data.savedConnections ?? {})].flatMap(s => [
-        ...s.inbound.filter(j => j.phase !== 'done' || j.composing).flatMap(j => j.prepared?.files.map(f => f.path) ?? []),
-        ...s.outbound.filter(j => j.phase !== 'done').flatMap(j => Object.values(j.media ?? {}).map(m => m.file.path))
+        ...s.inbound.filter(j => j.phase !== 'done' || j.composing || isHeld(j)).flatMap(j => j.prepared?.files.map(f => f.path) ?? []),
+        ...s.outbound.filter(j => j.phase !== 'done' || isHeld(j)).flatMap(j => Object.values(j.media ?? {}).map(m => m.file.path))
       ]));
       await this.media.cleanup(keep);
       if (controller.signal.aborted) return;
@@ -108,8 +112,12 @@ export class Bridge {
   }
   private skipped(count: number): void {
     if (!count) return;
-    this.skippedMessages += count;
-    this.status({ skippedMessages: this.skippedMessages });
+    this.status({ skippedMessages: countBacklog(this.store.data) });
+  }
+  async manageBacklog(action: 'restore' | 'clear', selection: BacklogSelection): Promise<number> {
+    const changed = await manageBacklog(this.store, action, selection);
+    this.status({ skippedMessages: countBacklog(this.store.data) });
+    return changed;
   }
   private async expire(): Promise<void> {
     this.skipped(await expireBacklog(this.store, this.config.storage.maxBacklogAgeMs));
@@ -162,7 +170,7 @@ export class Bridge {
     await this.expire();
     for (const expired of this.store.data.inbound.filter(j => j.expired && j.composing)) {
       await this.dot.clearDraft(expired.prepared?.text ?? expired.text ?? '', expired.prepared?.files ?? []);
-      await this.store.update(s => { delete s.inbound.find(j => j.id === expired.id)!.composing; });
+      await this.store.update(s => { const job = s.inbound.find(j => j.id === expired.id)!; delete job.composing; if (job.dismissed) discardHeldContent(job); });
     }
     signal?.throwIfAborted();
     const job = nextInbound(this.store.data);
@@ -177,7 +185,7 @@ export class Bridge {
     }
     let prepared: { text: string; files: LocalFile[] };
     try {
-      prepared = job.prepared ?? await this.prepare(job);
+      prepared = job.prepared && await filesAvailable(job.prepared.files) ? job.prepared : await this.prepare(job);
       if (!prepared.text.trim() && !prepared.files.length) throw new MessageContentError('这条消息没有可发送的文字、图片或文件，请改发文字、图片或文件。');
     } catch (error) {
       if (!(error instanceof MessageContentError)) throw error;
@@ -248,7 +256,7 @@ export class Bridge {
   private async deliver(signal: AbortSignal, kind: 'text' | 'media' | 'all' = 'all'): Promise<void> {
     await this.expire();
     if (!this.store.data.contextToken || this.store.data.weixinSendError) return;
-    for (const job of this.store.data.outbound.filter(j => j.phase !== 'done')) {
+    for (const job of this.store.data.outbound.filter(j => j.phase !== 'done' && j.message.complete)) {
       const parts: Array<{ text?: string; attachment?: DotAttachment }> = [
         ...splitText(job.message.text, this.config.weixin.maxTextLength).map(text => ({ text })),
         ...job.message.attachments.map(attachment => ({ attachment }))
@@ -269,6 +277,7 @@ export class Bridge {
           try {
             if (contentError) throw new MessageContentError(contentError);
             let cached = this.store.data.outbound.find(j => j.id === job.id)!.media?.[i];
+            if (cached && !cached.item && !await filesAvailable([cached.file])) cached = undefined;
             if (!cached) {
               const file = await this.dot.download(parts[i].attachment!, this.media);
               await this.store.update(s => { (s.outbound.find(j => j.id === job.id)!.media ??= {})[i] = { file }; });

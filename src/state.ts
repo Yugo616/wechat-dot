@@ -4,7 +4,7 @@ import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { sameDotConnection } from './dot/profile';
 export const emptyState = (): BridgeState => ({ version: 1, weixinCursor: '', inbound: [], outbound: [], enabled: false });
-function binding(s: BridgeState): string | undefined {
+export function connectionKey(s: BridgeState): string | undefined {
   if (!s.weixin || !s.dot) return;
   return createHash('sha256').update(JSON.stringify([s.weixin.userId, s.weixin.botId, s.dot.userId, s.dot.accountId, s.dot.roomId])).digest('hex');
 }
@@ -29,7 +29,7 @@ export class StateStore {
       if (!profile.accountId && s.dot?.accountId && sameDotConnection(s.dot, profile)) profile = { ...profile, accountId: s.dot.accountId };
       if (!profile.accountId) {
         const known = Object.entries(s.savedConnections ?? {}).filter(([key, saved]) =>
-          saved.dot && sameDotConnection(saved.dot, profile) && key === binding({ ...s, dot: saved.dot }));
+          saved.dot && sameDotConnection(saved.dot, profile) && key === connectionKey({ ...s, dot: saved.dot }));
         const accounts = [...new Set(known.map(([, saved]) => saved.dot!.accountId).filter(Boolean))];
         if (accounts.length === 1) profile = { ...profile, accountId: accounts[0] };
         else if (accounts.length > 1) throw new Error('这个 dot 有多个账号连接记录，请在 Chrome 中确认账号后重新识别。');
@@ -41,9 +41,9 @@ export class StateStore {
   }
   private async connect(change: (state: BridgeState) => boolean | void): Promise<void> {
     await this.update(s => {
-      const previous = binding(s), saved = { ...progress(s), dot: s.dot };
+      const previous = connectionKey(s), saved = { ...progress(s), dot: s.dot };
       const same = change(s);
-      const next = binding(s);
+      const next = connectionKey(s);
       if (!same && previous && next && previous !== next) {
         s.savedConnections ??= {};
         s.savedConnections[previous] = saved;

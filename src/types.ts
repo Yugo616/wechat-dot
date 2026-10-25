@@ -17,8 +17,11 @@ export interface WeixinMessage {
   message_type?: number; message_state?: number; create_time_ms?: number;
   item_list?: WeixinItem[]; context_token?: string;
 }
-export interface InboundJob { id: string; message: WeixinMessage; phase: 'pending' | 'sending' | 'done'; queuedAt?: number; expired?: boolean; composing?: boolean; lastError?: string; requestId?: string; text?: string; dotMessageId?: string; beforeCursor?: string; prepared?: { text: string; files: LocalFile[] } }
-export interface OutboundJob { id: string; message: DotMessage; part: number; phase: 'pending' | 'sending' | 'done'; queuedAt?: number; expired?: boolean; media?: Record<number, { file: LocalFile; item?: WeixinItem }>; contentErrors?: Record<number, string> }
+export interface InboundJob { id: string; message: WeixinMessage; phase: 'pending' | 'sending' | 'done'; queuedAt?: number; expired?: boolean; dismissed?: boolean; restoredAt?: number; resumePhase?: 'pending' | 'sending'; composing?: boolean; lastError?: string; requestId?: string; text?: string; dotMessageId?: string; beforeCursor?: string; prepared?: { text: string; files: LocalFile[] } }
+export interface OutboundJob { id: string; message: DotMessage; part: number; phase: 'pending' | 'sending' | 'done'; queuedAt?: number; expired?: boolean; dismissed?: boolean; restoredAt?: number; media?: Record<number, { file: LocalFile; item?: WeixinItem }>; contentErrors?: Record<number, string> }
+export interface BacklogItem { key: string; direction: 'inbound' | 'outbound'; text: string; timestamp?: number; partial: boolean }
+export interface BacklogSnapshot { connection: string; items: BacklogItem[] }
+export interface BacklogSelection { connection: string; keys: string[] }
 export interface BridgeState {
   version: 1; weixin?: WeixinAccount; dot?: DotProfile;
   weixinCursor: string; weixinPrimed?: boolean; dotCursor?: string; dotPending?: string[]; dotPendingSince?: Record<string, number>; contextToken?: string; weixinSendError?: string;
@@ -43,6 +46,7 @@ export interface AppStatus {
   weixinRetry?: string; dotRetry?: string;
   retries?: Partial<Record<BridgeTask, RetryStatus>>;
   skippedMessages?: number;
+  backlogConnection?: string;
   weixinSendError?: string;
   extension?: boolean;
   exitAction?: 'minimize' | 'quit'; exitPrompt?: boolean;

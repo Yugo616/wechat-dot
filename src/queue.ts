@@ -9,7 +9,7 @@ function messageTime(created: string | number | undefined, queuedAt: number): nu
 }
 export async function expireBacklog(store: StateStore, maxAgeMs: number, now = Date.now()): Promise<number> {
   const time = (job: BridgeState['inbound'][number] | BridgeState['outbound'][number]) =>
-    messageTime('part' in job ? job.message.createdAt : job.message.create_time_ms, job.queuedAt ?? now);
+    job.restoredAt ?? messageTime('part' in job ? job.message.createdAt : job.message.create_time_ms, job.queuedAt ?? now);
   const pending = [...store.data.inbound, ...store.data.outbound].filter(j => j.phase !== 'done');
   if (!pending.some(j => j.queuedAt === undefined || now - time(j) >= maxAgeMs)) return 0;
   let skipped = 0;
@@ -18,6 +18,11 @@ export async function expireBacklog(store: StateStore, maxAgeMs: number, now = D
       if (job.phase === 'done') continue;
       job.queuedAt ??= now;
       if (now - time(job) < maxAgeMs) continue;
+      if (!('part' in job)) job.resumePhase = job.phase;
+      else if (s.dotPending?.includes(job.id)) {
+        s.dotPending = s.dotPending.filter(id => id !== job.id);
+        if (s.dotPendingSince) delete s.dotPendingSince[job.id];
+      }
       job.phase = 'done'; job.expired = true; skipped++;
       // Keep the receipt and any owned draft, so reconnecting cannot replay it.
     }
@@ -25,6 +30,7 @@ export async function expireBacklog(store: StateStore, maxAgeMs: number, now = D
   return skipped;
 }
 export async function acceptWeixin(store: StateStore, messages: WeixinMessage[], cursor?: string): Promise<void> {
+  if (!messages.length && (cursor === undefined || cursor === store.data.weixinCursor)) return;
   await store.update(s => {
     const known = new Set(s.inbound.map(j => j.id));
     for (const message of messages) {
@@ -38,12 +44,18 @@ export async function acceptWeixin(store: StateStore, messages: WeixinMessage[],
   });
 }
 export async function acceptDot(store: StateStore, messages: any[], members: Set<string>, maxAgeMs = defaults.storage.maxBacklogAgeMs): Promise<number> {
+  if (!messages.length) return 0;
   let skipped = 0;
   await store.update(s => {
     const now = Date.now();
     const known = new Set(s.outbound.map(j => j.id));
     for (const raw of messages) {
       const message = normalizeDotMessage(raw, members);
+      const restored = s.outbound.find(job => job.id === raw.id && job.restoredAt !== undefined && job.phase !== 'done' && !job.message.complete);
+      if (restored && message) {
+        restored.message = message;
+        if (!message.complete) continue;
+      }
       const seenAt = s.dotPendingSince?.[raw.id] ?? now;
       const expired = message && now - messageTime(message.createdAt, seenAt) >= maxAgeMs;
       if (message && !message.complete && !expired && !known.has(message.id)) {
