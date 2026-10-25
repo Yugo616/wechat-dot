@@ -13,6 +13,7 @@ import { buildBlockMap } from 'app-builder-lib/out/targets/blockmap/blockmap.js'
 import assert from 'node:assert/strict';
 
 const exec = promisify(execFile), mac = process.platform === 'darwin';
+const native = process.env.WECHAT_DOT_UPDATE_NATIVE === '1';
 const pkg = JSON.parse(await readFile('package.json', 'utf8'));
 const root = await mkdtemp(join(tmpdir(), 'wechat-dot-updater-'));
 const cache = join(mac ? join(homedir(), 'Library/Caches') : process.env.LOCALAPPDATA, basename(root));
@@ -107,7 +108,10 @@ try {
   await page.getByRole('button', { name: '重启更新', exact: true }).click();
   await waitFor(() => previousProcess.exitCode !== null, 'Old app did not exit for installation'); desktop = undefined;
   await waitFor(async () => {
-    try { return JSON.parse(extractFile(join(resources, 'app.asar'), 'package.json').toString()).version === pkg.version; } catch { return false; }
+    try {
+      const metadata = native ? await readFile(join(resources, 'native/build-info.json'), 'utf8') : extractFile(join(resources, 'app.asar'), 'package.json').toString();
+      return JSON.parse(metadata).version === pkg.version;
+    } catch { return false; }
   }, 'Installed app did not become the new version', 90000);
   if (mac) await waitFor(async () => !(await readdir(apps)).some(n => n.startsWith('.wechat-dot-update-')), 'New app did not start and acknowledge update cleanup');
   else await waitFor(async () => {

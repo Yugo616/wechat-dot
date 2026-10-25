@@ -1,6 +1,6 @@
 # 开发
 
-需要 Node.js 22.12 以上。
+需要 Node.js 22.12 以上、Rust stable 和对应系统的编译工具（Mac 使用 Xcode Command Line Tools，Windows 使用 Visual Studio C++ Build Tools）。正式程序不需要用户安装这些工具。
 
 ```sh
 npm ci
@@ -12,8 +12,10 @@ npm run check
 npm run smoke
 node tests/desktop.mjs
 node tests/backlog-ui.mjs
-npm run release
+npm run release:native
 ```
+
+`npm start` 保留 Electron 作为开发测试窗口。正式分发使用 `npm run build:native` 构建 Tauri 窗口和自带 Node 的后台；`npm run release:native` 生成安装包。
 
 `check` 跑类型检查、单元测试和编译；`smoke` 打开真实窗口；`desktop.mjs` 用临时目录和本地接口验证文字、媒体、去重、重启、主动回复和托盘运行。
 
@@ -100,11 +102,15 @@ WECHAT_DOT_TEST_BROWSER=extension node tests/desktop.mjs
 
 ## 发布
 
-安装包保留 Electron 的简中、繁中和英文资源，压缩应用代码，只打包运行需要的图标。独立 Chrome for Testing、账号资料、托盘、媒体和更新流程不变；没有新增常驻进程或运行依赖。
+从 1.2.0 起，安装包使用 Tauri 系统窗口，不再包含 Electron / Chromium 框架。`src/controller.ts` 管理原有业务；`src/native/backend.ts` 在随包提供的官方 Node 中运行，通过父子进程管道与窗口通信。窗口退出会关闭后台，后台异常退出会自动恢复。Mac 使用系统 WebKit，Windows 使用 WebView2；缺少 WebView2 时安装器自动运行微软官方引导程序。专用 Chrome for Testing 和用户资料继续使用原来的目录。
+
+Node 的版本、下载来源和校验值在 `config/node-runtime.json`，Windows 显示组件在 `config/windows-runtime.json`。账号、路径和程序版本由当前安装动态获取。打包仍使用 electron-builder 的 prepackaged 模式，保持旧安装器、差分文件和更新入口兼容。
 
 正式版只读取 GitHub 的稳定 Release。点击「检查更新」后下载，点击「重启更新」才安装。`electron-updater` 处理版本、差分和校验；Windows 用 NSIS 安装，Mac 校验 ZIP 内的应用标识和版本后替换应用包，成功启动后清理旧包。首次没有缓存时下载完整文件。
 
-Mac M 系列、Intel 分别发布 `latest-arm64-mac.yml`、`latest-x64-mac.yml`，Windows 发布 `latest.yml`；安装包及 `.blockmap` 文件与它们放在同一个 Release。打包后运行 `node scripts/update-feed.mjs` 和 `node tests/updater.mjs`，用本地 GitHub 格式的服务检查完整下载、真实 HTTP Range 差分、安装、重启及消息状态保留。
+Mac M 系列、Intel 分别发布 `latest-arm64-mac.yml`、`latest-x64-mac.yml`，Windows 发布 `latest.yml`；安装包及 `.blockmap` 文件与它们放在同一个 Release。`native-package.mjs` 自动准备更新清单。`tests/native-updater.mjs` 检查完整与差分下载、校验失败和消息保留；`tests/legacy-app.mjs` 下载指定的旧正式版，配合 `WECHAT_DOT_UPDATE_NATIVE=1 node tests/updater.mjs` 验证旧 Electron 程序直接升级到原生程序。所有测试使用临时账号和目录。
+
+`tests/native-browser.mjs` 使用安装包里的 Node 和独立浏览器检查文字、图片、文件、语音及主动消息；Mac 的 `tests/native-smoke.mjs` 检查系统窗口连接与退出清理，Windows 安装后运行 `tests/native-windows-ui.mjs` 操作真正的 WebView2 窗口。
 
 推送 `v` 开头的版本标签后，GitHub Actions 构建 macOS Apple Silicon、macOS Intel 和 Windows x64 安装包。包含 `-alpha` 的版本自动发布为预览版。
 

@@ -29,24 +29,39 @@ jobs:
         with:
           node-version: 22
           cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
       - run: npm ci
       - run: npm run check
       - run: npm run smoke
       - run: node tests/backlog-ui.mjs
       - run: node tests/desktop.mjs
-      - name: Test default browser connection
-        run: node tests/desktop.mjs
-        env:
-          WECHAT_DOT_TEST_BROWSER: default
-      - name: Package installer
-        run: npx electron-builder --${{ matrix.platform }} --${{ matrix.arch }} --publish never
+      - name: Build native application
+        run: npm run build:native
+      - name: Check native backend and lifecycle
+        shell: bash
+        run: |
+          cargo test --manifest-path src-tauri/Cargo.toml
+          node tests/native-backend.mjs
+          node tests/native-updater.mjs
+      - name: Test bundled Node and dedicated browser
+        run: node tests/native-browser.mjs
+      - name: Package native installer
+        run: node scripts/native-package.mjs
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'
-      - name: Prepare update feed
-        run: node scripts/update-feed.mjs
-      - name: Check differential update and installation
+      - name: Prepare previous release for upgrade check
+        run: node tests/legacy-app.mjs
+        env:
+          WECHAT_DOT_LEGACY_VERSION: '1.1.0'
+      - name: Check previous release upgrades to native application
         run: node tests/updater.mjs
-      - name: Check Windows installation
+        env:
+          WECHAT_DOT_UPDATE_NATIVE: '1'
+          WECHAT_DOT_EXECUTABLE: ${{ runner.os == 'macOS' && '.cache/legacy/WeChat Dot.app/Contents/MacOS/WeChat Dot' || '.cache/legacy/WeChat Dot.exe' }}
+      - name: Check Windows installation and native interface
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
@@ -66,26 +81,16 @@ jobs:
             $bitmap.Dispose(); $icon.Dispose()
           }
           $env:WECHAT_DOT_EXECUTABLE = $app
-          npm run smoke
-          if ($LASTEXITCODE -ne 0) { throw 'Installed app did not launch' }
-          node tests/backlog-ui.mjs
-          if ($LASTEXITCODE -ne 0) { throw 'Installed app held-message controls failed' }
-          $env:WECHAT_DOT_TEST_BROWSER = 'default'
-          node tests/desktop.mjs
-          if ($LASTEXITCODE -ne 0) { throw 'Installed app media test failed' }
-      - name: Check macOS packaged application
+          node tests/native-windows-ui.mjs
+          if ($LASTEXITCODE -ne 0) { throw 'Installed native interface failed' }
+      - name: Check macOS native application without installed Node
         if: runner.os == 'macOS'
-        shell: bash
-        run: |
-          APP=$(find release -maxdepth 2 -name 'WeChat Dot.app' -print -quit)
-          WECHAT_DOT_EXECUTABLE="$APP/Contents/MacOS/WeChat Dot" npm run smoke
-          WECHAT_DOT_EXECUTABLE="$APP/Contents/MacOS/WeChat Dot" node tests/backlog-ui.mjs
-          WECHAT_DOT_EXECUTABLE="$APP/Contents/MacOS/WeChat Dot" WECHAT_DOT_TEST_BROWSER=default node tests/desktop.mjs
+        run: node tests/native-smoke.mjs
       - uses: actions/upload-artifact@v4
         if: runner.os == 'Windows'
         with:
-          name: windows-installed-icons
-          path: test-results/icon-*.png
+          name: windows-installed-interface
+          path: test-results/*.png
       - uses: actions/upload-artifact@v4
         with:
           name: wechat-dot-${{ matrix.platform }}-${{ matrix.arch }}
