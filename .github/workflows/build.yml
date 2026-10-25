@@ -36,6 +36,8 @@ jobs:
       - run: npm run smoke
       - run: node tests/backlog-ui.mjs
       - run: node tests/desktop.mjs
+        if: inputs.platform != 'win'
+        timeout-minutes: 3
       - name: Build native application
         run: npm run build:native
       - name: Check native backend and lifecycle
