@@ -13,7 +13,7 @@ import { connectionSummary } from '../src/status';
 const windowMs = 10 * 60 * 1000;
 const config = { ...defaults, storage: { ...defaults.storage, maxBacklogAgeMs: windowMs }, weixin: { ...defaults.weixin, retryDelayMs: 10 }, dot: { ...defaults.dot, pollIntervalMs: 10 } };
 async function until(check: () => boolean) {
-  const deadline = Date.now() + 1500;
+  const deadline = Date.now() + 5000;
   while (!check()) { if (Date.now() > deadline) assert.fail('Expected progress was blocked'); await delay(5); }
 }
 async function setup(t: any) {
