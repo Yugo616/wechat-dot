@@ -1,7 +1,9 @@
-import type { AppStatus } from '../types';
+import type { AppStatus, BacklogSelection, BacklogSnapshot } from '../types';
 import { connectionSummary, problemText } from '../status';
-declare global { interface Window { wechatDot: { status(): Promise<AppStatus>; action(name: string, value?: string): Promise<void>; resize(height: number): void; onStatus(callback: (s: AppStatus) => void): void } } }
+import { BacklogView } from './backlog';
+declare global { interface Window { wechatDot: { status(): Promise<AppStatus>; backlog(): Promise<BacklogSnapshot>; manageBacklog(action: 'restore' | 'clear', selection: BacklogSelection): Promise<{ changed: number; snapshot: BacklogSnapshot }>; action(name: string, value?: string): Promise<void>; resize(height: number): void; onStatus(callback: (s: AppStatus) => void): void } } }
 const el = (id: string) => document.getElementById(id)!;
+const backlog = new BacklogView();
 let current: AppStatus | undefined;
 let busy: string | undefined;
 function render(s: AppStatus) {
@@ -15,8 +17,9 @@ function render(s: AppStatus) {
   const summary = connectionSummary(s);
   el('detail').textContent = summary.detail;
   el('detail').classList.toggle('problem', summary.attention);
-  el('backlog-note').hidden = !s.skippedMessages;
-  el('backlog-note').textContent = s.skippedMessages ? `已跳过 ${s.skippedMessages} 条过期消息` : '';
+  el('backlog-area').hidden = !s.skippedMessages;
+  el('backlog-note').textContent = s.skippedMessages ? `${s.skippedMessages} 条消息已暂存` : '';
+  backlog.update(s);
   const recovery = el('recovery-button');
   recovery.hidden = !summary.action;
   recovery.textContent = summary.action?.label ?? '';

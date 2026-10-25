@@ -1,0 +1,73 @@
+import { _electron as electron } from 'playwright-core';
+import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import assert from 'node:assert/strict';
+
+const data = await mkdtemp(join(tmpdir(), 'wechat-dot-backlog-ui-'));
+const stamp = Date.now() - 3600000;
+const firstText = '<img src=x onerror=alert(1)> 这是一条很长的旧问题，恢复时保留原内容。'.repeat(12);
+const base = { version: 1, enabled: false, weixin: { userId: 'fixture-owner', botId: 'fixture-bot', token: 'fixture', baseUrl: '' }, dot: { id: 'fixture', userId: 'fixture', accountId: 'fixture', roomId: 'fixture', name: '我的 dot', url: '' },
+  weixinPrimed: true, weixinCursor: 'fixture-wx', dotCursor: 'fixture-dot', inbound: Array.from({ length: 50 }, (_, i) => ({ id: `held-${i}`, phase: 'done', expired: true, message: { create_time_ms: stamp + i, item_list: [{ text_item: { text: i ? `待恢复问题 ${i}` : firstText } }] } })),
+  outbound: [{ id: 'reply', phase: 'done', expired: true, part: 1, message: { id: 'reply', text: '已经发出第一部分，这里只恢复未发送的后续部分。', complete: true, createdAt: new Date(stamp + 100).toISOString(), attachments: [] } }] };
+await writeFile(join(data, 'state.json'), JSON.stringify(base));
+let desktop;
+const launch = () => electron.launch({ ...(process.env.WECHAT_DOT_EXECUTABLE ? { executablePath: process.env.WECHAT_DOT_EXECUTABLE, args: [] } : { args: ['.'] }), env: { ...process.env, WECHAT_DOT_DATA: data }, timeout: 60000 });
+const state = async () => JSON.parse(await readFile(join(data, 'state.json'), 'utf8'));
+try {
+  desktop = await launch();
+  let page = await desktop.firstWindow();
+  page.setDefaultTimeout(8000);
+  await page.getByRole('button', { name: '查看', exact: true }).waitFor();
+  assert.match(await page.locator('#backlog-note').innerText(), /51/);
+  await page.getByRole('button', { name: '查看', exact: true }).click();
+  await page.getByRole('heading', { name: '暂存消息' }).waitFor();
+  assert.equal(await page.locator('.backlog-row').count(), 51);
+  assert.equal(await page.locator('.backlog-row img').count(), 0, 'Message text must not become HTML');
+  assert.equal(await page.locator('.backlog-text').first().innerText(), firstText);
+  const rows = page.locator('.backlog-row');
+  await rows.nth(1).getByRole('checkbox').check();
+  await rows.nth(2).getByRole('checkbox').check();
+  await page.locator('#backlog-list').evaluate(node => { node.scrollTop = 80; });
+  await desktop.evaluate(async ({ BrowserWindow }) => {
+    const win = BrowserWindow.getAllWindows().find(w => w.webContents.getURL().endsWith('/index.html'));
+    const status = await win.webContents.executeJavaScript('window.wechatDot.status()');
+    win.webContents.send('status', { ...status, updatedAt: new Date().toISOString() });
+  });
+  assert.equal(await rows.nth(1).getByRole('checkbox').isChecked(), true);
+  assert.equal(await page.locator('#backlog-list').evaluate(node => node.scrollTop), 80);
+  const layout = await page.locator('main').evaluate(node => ({ content: node.scrollWidth, viewport: document.documentElement.clientWidth }));
+  assert.ok(layout.content <= layout.viewport, 'Long messages must not overflow the window');
+  await mkdir('test-results', { recursive: true });
+  await page.screenshot({ path: 'test-results/backlog-light.png' });
+  await page.emulateMedia({ colorScheme: 'dark' });
+  await page.screenshot({ path: 'test-results/backlog-dark.png' });
+  await page.emulateMedia({ colorScheme: 'light' });
+  await page.getByRole('button', { name: '恢复所选（2）', exact: true }).click();
+  await page.getByRole('button', { name: '恢复所选（0）', exact: true }).waitFor();
+  assert.equal((await state()).inbound.filter(j => !j.expired).length, 2);
+  await page.locator('.backlog-row').first().getByRole('button', { name: '恢复', exact: true }).click();
+  await page.locator('.backlog-row').filter({ hasText: firstText }).waitFor({ state: 'detached' });
+  assert.equal((await state()).inbound[0].message.item_list[0].text_item.text, firstText);
+  await page.getByRole('button', { name: '清空', exact: true }).click();
+  await page.getByText('没有暂存消息', { exact: true }).waitFor();
+  await page.getByRole('button', { name: '返回', exact: true }).click();
+  assert.equal(await page.locator('#backlog-area').isVisible(), false);
+  assert.equal((await state()).enabled, false, 'Restoring while paused must not start sending');
+  await desktop.close(); desktop = await launch(); page = await desktop.firstWindow();
+  await page.getByRole('button', { name: '开始转发', exact: true }).waitFor();
+  assert.equal(await page.locator('#backlog-area').isVisible(), false, 'Cleared count must stay gone after restart');
+  await desktop.close(); desktop = undefined;
+  const second = { ...base, inbound: base.inbound.slice(0, 2) };
+  await writeFile(join(data, 'state.json'), JSON.stringify(second));
+  desktop = await launch(); page = await desktop.firstWindow();
+  await page.getByRole('button', { name: '查看', exact: true }).click();
+  await page.getByRole('button', { name: '全部恢复', exact: true }).click();
+  await page.getByText('没有暂存消息', { exact: true }).waitFor();
+  const all = await state();
+  assert.equal(all.inbound.every(j => j.phase === 'pending' && !j.expired), true);
+  assert.equal(all.outbound[0].part, 1);
+  assert.equal(all.outbound[0].phase, 'pending');
+  assert.equal(all.enabled, false);
+  console.log('PASS: held-list single, selected, all, clear and restart; paused state, partial position, escaped text and stable selection retained.');
+} finally { if (desktop) await desktop.close(); await rm(data, { recursive: true, force: true }); }

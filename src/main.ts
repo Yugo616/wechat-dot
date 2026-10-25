@@ -7,7 +7,8 @@ import { UpdateController } from './updates/controller';
 import { MacDownloadUpdater } from './updates/mac-download';
 import { finishMacInstall, removeMacStage, scheduleMacInstall, stageMacUpdate } from './updates/mac-install';
 import { loadConfig } from './config';
-import { StateStore } from './state';
+import { connectionKey, StateStore } from './state';
+import { backlogSnapshot, countBacklog } from './backlog';
 import { WeixinClient, WeixinExpiredError } from './weixin/client';
 import { DotClient } from './dot/client';
 import { DotAccessError } from './dot/errors';
@@ -79,7 +80,7 @@ async function run(): Promise<void> {
     const hadAccessError = status.dot === 'error' || status.weixin === 'error';
     if (patch.dot === 'error' || patch.weixin === 'error') resumeAfterLogin ||= Boolean(status.running || status.connecting);
     if (patch.running) resumeAfterLogin = false;
-    status = { ...status, ...patch, weixinSendError: store.data.weixinSendError };
+    status = { ...status, ...patch, weixinSendError: store.data.weixinSendError, skippedMessages: countBacklog(store.data), backlogConnection: connectionKey(store.data) ?? '' };
     if (patch.running || patch.dot === 'error' || patch.weixin === 'error') status.connecting = false;
     if (!window.isDestroyed()) window.webContents.send('status', status);
     const { title } = connectionSummary(status);
@@ -320,6 +321,15 @@ async function run(): Promise<void> {
     }
   }
   ipcMain.handle('status', () => status);
+  ipcMain.handle('backlog', event => {
+    if (event.sender !== window.webContents) return;
+    return backlogSnapshot(store.data);
+  });
+  ipcMain.handle('manage-backlog', async (event, action, selection) => {
+    if (event.sender !== window.webContents) return;
+    const changed = await bridge.manageBacklog(action, selection);
+    return { changed, snapshot: backlogSnapshot(store.data) };
+  });
   ipcMain.handle('action', (event, name, value) => {
     if (event.sender !== window.webContents) return;
     return action(name, value);

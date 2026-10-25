@@ -422,7 +422,7 @@ try {
   assert.equal(nativeSends.length, beforeBacklog.native + 1);
   assert.equal(nativeSends.at(-1).content.text, '只处理最近的问题');
   await reopenSetup();
-  await waitFor(async () => (await recoverySettings.locator('#backlog-note').textContent()) === '已跳过 3 条过期消息', 'Expired count must appear once in the settings');
+  await waitFor(async () => (await recoverySettings.locator('#backlog-note').textContent()) === '3 条消息已暂存', 'Held count must appear once in the settings');
   const afterBacklog = JSON.parse(await readFile(join(data, 'state.json'), 'utf8'));
   assert.deepEqual(afterBacklog.dot, beforeBacklog.dot, 'Expiring work must retain the original dot conversation');
   assert.equal(afterBacklog.inbound.find(j => j.id === 'wx-expired').composing, undefined);

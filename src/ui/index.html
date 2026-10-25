@@ -10,6 +10,7 @@
 <body>
 <main>
   <header><div class="brand"><img src="icon.svg" alt="" width="30" height="30"><h1>WeChat Dot</h1></div><span id="version"></span></header>
+  <div id="connection-panel">
   <section class="accounts" aria-label="连接账号">
     <div class="account">
       <div class="account-row">
@@ -32,7 +33,7 @@
   <section class="connection-status" aria-live="polite">
     <div class="status-line"><span id="status-dot" aria-hidden="true"></span><strong id="running">转发已暂停</strong></div>
     <p id="detail">先扫码绑定微信，再登录 ChatGPT。</p>
-    <p id="backlog-note" hidden></p>
+    <div id="backlog-area" hidden><p id="backlog-note"></p><button class="outline" id="backlog-open">查看</button></div>
     <button id="recovery-button" data-action="" hidden></button>
   </section>
   <div id="review" hidden>
@@ -43,6 +44,16 @@
   <p class="background-note">开始后自动收起，电脑需保持开机、联网。<br>关闭窗口后仍在菜单栏或托盘运行。</p>
   <footer><button class="link" data-action="check-update" id="update-button">检查更新</button><button class="link" data-action="request-exit" id="exit-button">退出</button></footer>
   <div class="update-note" id="update-area" aria-live="polite" hidden><span id="update-detail"></span><button class="link" data-action="download" id="download">下载页面</button></div>
+  </div>
+  <section id="backlog-panel" aria-labelledby="backlog-title" hidden>
+    <div class="backlog-heading"><div><h2 id="backlog-title">暂存消息</h2><span id="backlog-total"></span></div><button class="outline" id="backlog-close">返回</button></div>
+    <p class="backlog-description" id="backlog-hint"></p>
+    <div class="backlog-tools"><label><input id="backlog-select-all" type="checkbox">全选</label><button class="outline" id="backlog-clear" data-backlog="clear">清空</button></div>
+    <div id="backlog-list" aria-label="暂存消息列表"></div>
+    <p id="backlog-empty" hidden>没有暂存消息</p>
+    <div class="backlog-footer"><button class="outline" id="backlog-restore-selected" data-backlog="restore-selected">恢复所选（0）</button><button class="outline" id="backlog-restore-all" data-backlog="restore-all">全部恢复</button></div>
+    <p id="backlog-feedback" role="status"></p>
+  </section>
   <dialog id="exit-dialog" aria-labelledby="exit-title">
     <h2 id="exit-title">要退出 WeChat Dot 吗？</h2>
     <p>最小化后继续在后台转发。退出后台会停止收发。</p>
