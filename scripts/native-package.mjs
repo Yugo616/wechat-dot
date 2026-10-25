@@ -18,7 +18,9 @@ else {
   if (!response.ok) throw new Error(`WebView2 bootstrapper download: ${response.status}`);
   const file = join(source, 'resources/MicrosoftEdgeWebview2Setup.exe');
   await writeFile(file, Buffer.from(await response.arrayBuffer()));
-  await promisify(execFile)('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', '$s = Get-AuthenticodeSignature -LiteralPath $env:WECHAT_DOT_BOOTSTRAPPER; if ($s.Status -ne "Valid" -or $s.SignerCertificate.Subject -notmatch "Microsoft Corporation") { throw "Invalid Microsoft bootstrapper signature" }'], { env: { ...process.env, WECHAT_DOT_BOOTSTRAPPER: file } });
+  // Windows PowerShell must load its own modules when npm was started by PowerShell 7.
+  const shellEnv = Object.fromEntries(Object.entries(process.env).filter(([key]) => key.toLowerCase() !== 'psmodulepath'));
+  await promisify(execFile)('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', '$ErrorActionPreference = "Stop"; $s = Get-AuthenticodeSignature -LiteralPath $env:WECHAT_DOT_BOOTSTRAPPER; if ($s.Status -ne "Valid" -or $s.SignerCertificate.Subject -notmatch "Microsoft Corporation") { throw "Invalid Microsoft bootstrapper signature" }'], { env: { ...shellEnv, WECHAT_DOT_BOOTSTRAPPER: file } });
   await writeFile('dist/webview-runtime.nsh', `!define WEBVIEW_CLIENT_ID "${config.clientId}"\n`);
 }
 await build({ prepackaged: source, targets: (mac ? Platform.MAC : Platform.WINDOWS).createTarget(undefined, process.arch === 'arm64' ? Arch.arm64 : Arch.x64), publish: 'never' });
